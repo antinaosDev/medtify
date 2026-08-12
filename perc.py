@@ -1309,18 +1309,38 @@ if app_mode == "📊 Análisis Archivo Percápita":
                         orden_meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
                         meses_ordenados = sorted([m for m in meses_disponibles if m in orden_meses], key=lambda x: orden_meses.index(x))
                         otros_meses = [m for m in meses_disponibles if m not in orden_meses]
-                        meses_finales = meses_ordenados + otros_meses
-                        mes_corte_seleccionado = st.selectbox("2. Seleccione Mes de Corte 🗓️", options=meses_finales, index=len(meses_finales)-1 if meses_finales else 0)
+                        meses_finales = ["Todos"] + meses_ordenados + otros_meses
+                        mes_corte_seleccionado = st.selectbox("2. Seleccione Mes de Corte 🗓️", options=meses_finales, index=len(meses_finales)-1 if len(meses_finales) > 1 else 0)
 
                     anio_inicio, anio_fin = opcion_año
                     
                     if not df_auth.empty and mes_corte_seleccionado:
-                        df_filtrado = df_auth[(df_auth['ANIO_CORTE'] >= anio_inicio) & (df_auth['ANIO_CORTE'] <= anio_fin) & (df_auth['MES_CORTE'] == mes_corte_seleccionado)]
+                        if mes_corte_seleccionado == "Todos":
+                            df_filtrado = df_auth[(df_auth['ANIO_CORTE'] >= anio_inicio) & (df_auth['ANIO_CORTE'] <= anio_fin)]
+                        else:
+                            df_filtrado = df_auth[(df_auth['ANIO_CORTE'] >= anio_inicio) & (df_auth['ANIO_CORTE'] <= anio_fin) & (df_auth['MES_CORTE'] == mes_corte_seleccionado)]
+                            
                         if not df_filtrado.empty:
-                            df_grouped = df_filtrado.groupby('ANIO_CORTE')['RUT'].count().reset_index()
-                            df_grouped.columns = ['Año', 'Inscritos']
-                            st.markdown(f"### Evolución de Inscritos - Corte: {mes_corte_seleccionado}")
-                            fig = px.bar(df_grouped, x='Año', y='Inscritos', text_auto=True, color_discrete_sequence=['#00A8E8'])
+                            if mes_corte_seleccionado == "Todos":
+                                df_grouped = df_filtrado.groupby(['ANIO_CORTE', 'MES_CORTE'])['RUT'].count().reset_index()
+                                meses_map_rev = {
+                                    "Enero":1, "Febrero":2, "Marzo":3, "Abril":4, "Mayo":5, "Junio":6,
+                                    "Julio":7, "Agosto":8, "Septiembre":9, "Octubre":10, "Noviembre":11, "Diciembre":12
+                                }
+                                df_grouped['MES_NUM'] = df_grouped['MES_CORTE'].map(lambda x: meses_map_rev.get(str(x).capitalize(), 0))
+                                df_grouped = df_grouped.sort_values(['ANIO_CORTE', 'MES_NUM'])
+                                df_grouped['Periodo'] = df_grouped['MES_CORTE'].astype(str) + " " + df_grouped['ANIO_CORTE'].astype(str)
+                                df_grouped = df_grouped[['Periodo', 'RUT']]
+                                df_grouped.columns = ['Periodo', 'Inscritos']
+                                
+                                st.markdown(f"### Evolución de Inscritos - Todos los meses")
+                                fig = px.bar(df_grouped, x='Periodo', y='Inscritos', text_auto=True, color_discrete_sequence=['#00A8E8'])
+                            else:
+                                df_grouped = df_filtrado.groupby('ANIO_CORTE')['RUT'].count().reset_index()
+                                df_grouped.columns = ['Año', 'Inscritos']
+                                st.markdown(f"### Evolución de Inscritos - Corte: {mes_corte_seleccionado}")
+                                fig = px.bar(df_grouped, x='Año', y='Inscritos', text_auto=True, color_discrete_sequence=['#00A8E8'])
+                                
                             fig.update_traces(marker_line_color='rgb(8,48,107)', marker_line_width=1.5, opacity=0.8)
                             fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#2C3E50')
                             st.plotly_chart(fig, width='stretch', theme=None)
@@ -2758,7 +2778,8 @@ else:
                         
                         if not df_grafico_global['FECHA_RESCATE_DT'].isna().all():
                             df_grafico_global['FECHA_DIA'] = df_grafico_global['FECHA_RESCATE_DT'].dt.strftime('%d-%m-%Y')
-                            
+                            df_grafico_global['FECHA_MES'] = df_grafico_global['FECHA_RESCATE_DT'].dt.strftime('%Y-%m')
+                                
                             df_grafico_global['TIPO_INSCRIPCION'] = 'Nuevos Inscritos'
                             if 'CATEGORIA' in df_grafico_global.columns:
                                 idx_ya = df_grafico_global['CATEGORIA'].str.contains('Re-inscrip', case=False, na=False)
@@ -2766,6 +2787,7 @@ else:
                                 idx_pre = df_grafico_global['CATEGORIA'].str.contains('Presenta registro', case=False, na=False)
                                 df_grafico_global.loc[idx_pre, 'TIPO_INSCRIPCION'] = 'Ya en Plataforma'
                                 
+                            # Gráfico Diario
                             df_tiempo_g = df_grafico_global.groupby(['FECHA_DIA', 'TIPO_INSCRIPCION']).size().reset_index(name='CANTIDAD')
                             df_tiempo_g['FECHA_SORT'] = pd.to_datetime(df_tiempo_g['FECHA_DIA'], format='%d-%m-%Y')
                             df_tiempo_g = df_tiempo_g.sort_values('FECHA_SORT')
@@ -2775,7 +2797,18 @@ else:
                             fig_tiempo_g.update_traces(textposition="top center", marker=dict(size=8, line=dict(width=1.5, color='white')))
                             max_y2 = max(40, df_tiempo_g['CANTIDAD'].max() * 1.1) if not df_tiempo_g.empty else 40
                             fig_tiempo_g.update_layout(xaxis_type='category', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#2C3E50', xaxis_title="Fecha", yaxis_title="Rescates Históricos Únicos", margin=dict(l=0, r=0, t=30, b=0), legend_title_text='', yaxis=dict(range=[0, max_y2]))
-                            st.plotly_chart(fig_tiempo_g, width="stretch")
+                            
+                            # Gráfico Mensual
+                            df_mensual = df_grafico_global.groupby(['FECHA_MES', 'TIPO_INSCRIPCION']).size().reset_index(name='CANTIDAD')
+                            df_mensual = df_mensual.sort_values('FECHA_MES')
+                            fig_mensual = px.bar(df_mensual, x='FECHA_MES', y='CANTIDAD', color='TIPO_INSCRIPCION', text_auto=True)
+                            fig_mensual.update_layout(xaxis_type='category', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#2C3E50', xaxis_title="Mes y Año", yaxis_title="Rescates por Mes", margin=dict(l=0, r=0, t=30, b=0), legend_title_text='')
+                            
+                            tab_mensual, tab_diario = st.tabs(["📊 Evolución Mensual", "📈 Evolución Diaria"])
+                            with tab_mensual:
+                                st.plotly_chart(fig_mensual, width="stretch")
+                            with tab_diario:
+                                st.plotly_chart(fig_tiempo_g, width="stretch")
                 
                 with st.expander("📄 Ver Datos de Rescates Exitosos (Crudos)"):
                     st.dataframe(df_rescates_raw, width='stretch')
