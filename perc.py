@@ -2804,11 +2804,11 @@ else:
                             fig_mensual = px.bar(df_mensual, x='FECHA_MES', y='CANTIDAD', color='TIPO_INSCRIPCION', text_auto=True)
                             fig_mensual.update_layout(xaxis_type='category', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#2C3E50', xaxis_title="Mes y Año", yaxis_title="Rescates por Mes", margin=dict(l=0, r=0, t=30, b=0), legend_title_text='')
                             
-                            tab_mensual, tab_diario = st.tabs(["📊 Evolución Mensual", "📈 Evolución Diaria"])
-                            with tab_mensual:
-                                st.plotly_chart(fig_mensual, width="stretch")
+                            tab_diario, tab_mensual = st.tabs(["📈 Evolución Diaria", "📊 Evolución Mensual"])
                             with tab_diario:
                                 st.plotly_chart(fig_tiempo_g, width="stretch")
+                            with tab_mensual:
+                                st.plotly_chart(fig_mensual, width="stretch")
                 
                 with st.expander("📄 Ver Datos de Rescates Exitosos (Crudos)"):
                     st.dataframe(df_rescates_raw, width='stretch')
