@@ -10,3 +10,6 @@ altair
 requests
 polars
 pytz
+groq
+fpdf
+pyperclip
