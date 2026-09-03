@@ -76,10 +76,21 @@ class EvolutionClient:
             )
             if r.status_code == 200:
                 data = r.json()
+                # Handle both response formats:
+                # Format 1: {"instance":{"instanceName":"medtify","state":"open"}}
+                # Format 2: {"state":{"state":"open"}}
+                state = "unknown"
+                if "instance" in data and isinstance(data["instance"], dict):
+                    state = data["instance"].get("state", "unknown")
+                elif "state" in data and isinstance(data["state"], dict):
+                    state = data["state"].get("state", "unknown")
+                elif "state" in data and isinstance(data["state"], str):
+                    state = data["state"]
+                
                 return {
-                    "connected": data.get("state", {}).get("state") == "open",
-                    "state": data.get("state", {}).get("state", "unknown"),
-                    "qrcode": data.get("state", {}).get("state") == "close",
+                    "connected": state == "open",
+                    "state": state,
+                    "qrcode": state == "close",
                     "raw": data
                 }
             return {"connected": False, "state": "error", "qrcode": False}
