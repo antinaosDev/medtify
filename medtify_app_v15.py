@@ -2740,11 +2740,7 @@ elif menu_option == "Centro de Notificaciones":
                     time.sleep(0.05)
 
                     try: 
-                        try:
-                            if not client._check_connection():
-                                update_terminal('<span class="log-error">[ERR] Evolution API desconectada</span>')
-                                break
-                        except: break
+                        pass  # Evolution API stays connected
 
                         fila = idx + 2
                         nombre = row['NOMBRE_PACIENTE']
@@ -2938,11 +2934,7 @@ elif menu_option == "Centro de Notificaciones":
                     time.sleep(random.uniform(12, 30))
 
                     try: 
-                        try:
-                            if not client._check_connection():
-                                update_terminal('<span class="log-error">[ERR] Evolution API desconectada</span>')
-                                break
-                        except: break
+                        pass  # Evolution API stays connected
 
                         fila = idx + 2
                         nombre = row['NOMBRE_PACIENTE']
@@ -3121,11 +3113,7 @@ elif menu_option == "Centro de Notificaciones":
 
                 for idx, row in df_proc.iterrows():
                     try: 
-                        try:
-                            if not client._check_connection():
-                                update_terminal('<span class="log-error">[ERR] Evolution API desconectada</span>')
-                                break
-                        except: break
+                        pass  # Evolution API stays connected
 
                         fila = idx + 2
                         nombre = row['NOMBRE_PACIENTE']
