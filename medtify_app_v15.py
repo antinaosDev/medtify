@@ -1635,6 +1635,30 @@ with st.sidebar:
         help="Si está activo, solo registra mensajes sin enviarlos"
     )
     st.session_state["evo_safe_mode"] = evo_safe
+    
+    # Connection status indicator
+    st.markdown("---")
+    st.markdown("### 📡 Estado de Conexión")
+    
+    try:
+        test_client = EvolutionClient(
+            base_url=st.session_state.get("evo_api_url", "http://localhost:8080"),
+            api_key=st.session_state.get("evo_api_key", ""),
+            instance=st.session_state.get("evo_instance", "medtify"),
+            safe_mode=st.session_state.get("evo_safe_mode", True)
+        )
+        if test_client._check_connection():
+            qr_status = test_client.check_qr_status()
+            if qr_status.get("connected"):
+                st.success("✅ WhatsApp Conectado")
+            else:
+                st.warning("⚠️ WhatsApp No Conectado")
+                st.info("Abre Evolution Manager para escanear QR")
+        else:
+            st.error("❌ Evolution API no responde")
+            st.info("Verifica que el VPS esté corriendo")
+    except:
+        st.warning("⚠️ No se pudo verificar conexión")
 
 # --- CARGA DE DATOS (CON CACHÉ INTELIGENTE) ---
 df = get_data_fresh(MASTER_ACCOUNT_ID)
@@ -2667,7 +2691,7 @@ elif menu_option == "Centro de Notificaciones":
                     update_terminal(f'<span class="log-success">[AUTH]</span> Login exitoso. Acceso concedido.')
                     time.sleep(2)
                 else:
-                    update_terminal(f'<span class="log-error">[ERROR]</span> Tiempo agotado. Abortando.')
+                    update_terminal(f'<span class="log-error">[ERROR]</span> WhatsApp no conectado. Abre Evolution Manager y escanea el QR.')
                     # cleanup
                     st.stop()
 
@@ -2843,7 +2867,7 @@ elif menu_option == "Centro de Notificaciones":
                     update_terminal(f'<span class="log-success">[AUTH]</span> Login exitoso. Acceso concedido.')
                     time.sleep(2)
                 else:
-                    update_terminal(f'<span class="log-error">[ERROR]</span> Tiempo agotado. Abortando.')
+                    update_terminal(f'<span class="log-error">[ERROR]</span> WhatsApp no conectado. Abre Evolution Manager y escanea el QR.')
                     # cleanup
                     st.stop()
 
@@ -3010,7 +3034,7 @@ elif menu_option == "Centro de Notificaciones":
                     update_terminal(f'<span class="log-success">[AUTH]</span> Login exitoso.')
                     time.sleep(2)
                 else:
-                    update_terminal(f'<span class="log-error">[ERROR]</span> Tiempo agotado.')
+                    update_terminal(f'<span class="log-error">[ERROR]</span> WhatsApp no conectado. Abre Evolution Manager.')
                     # cleanup
                     st.stop()
 
