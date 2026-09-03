@@ -1,47 +1,66 @@
+# ============================================
+# MEDTIFY - PROTECCIÓN DE CREDENCIALES
+# NUNCA subir estos archivos a GitHub
+# ============================================
+
+# === CREDENCIALES Y SECRETS ===
+.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+cred.py
+*_backup_*
+
+# === PYTHON ===
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
 env/
 venv/
-.env
 .venv/
-env.bak/
-venv.bak/
-.streamlit/secrets.toml
-.vscode/
-.opencode.json
-.antigravity/
+*.egg-info/
 
-# Builds and dists
+# === BUILD / DIST ===
 build/
 dist/
-dist_definitivo/
-dist.zip
-perc_app/
-app_base/
-mi_base/
+*.exe
 *.spec
+*.spec.bak
+MedtifyV15.spec
+MedtifyRotacionV2.spec
+run.spec
 
-# Credentials and secrets
-cred.py
-token.json
-sistemas-*.json
-limit_tracker.json
+# === LOGS ===
+*.log
+medtify_log.txt
+scorm_runlog.txt
 
-# Sessions and user data
-selenium_profile/
+# === MEDIA / CACHE ===
 medtify_session/
-sesion_whatsapp_*/
-archivo/
+*.tmp
+*.swp
+*.swo
+*~
 
-# Virtual environments
-notify/
+# === IDE ===
+.vscode/
+.idea/
 
-# Medtify app & notificaciones
-medtify_app*.py
-icono_noti.*
-logo_noti.*
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === ARCHIVOS ANTIGUOS (V14 y anteriores) ===
+medtify_app.py
+medtify_app copy.py
+medtify_app_base.py
+medtify_app_rotacion.py
 launcher.py
-test_login.py
+launcher_rotacion.py
+build_*.sh
+build_*.ps1
+EMPAQUETADO.md
+DEPLOY_VPS.md
+SETUP_PC_SERVIDOR.md

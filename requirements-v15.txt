@@ -1,0 +1,17 @@
+streamlit
+pandas
+numpy
+gspread
+google-auth
+plotly
+chardet
+xlsxwriter
+altair
+requests
+polars
+pytz
+groq
+fpdf
+pyperclip
+# NOTE: No selenium, no chromedriver needed!
+# Evolution API client is included as evolution_client.py
