@@ -161,43 +161,51 @@ class EvolutionClient:
             (success, log_message)
         """
         jid = self.format_phone(numero)
-        print(f"[SEND] safe_mode={self.safe_mode}, numero={numero} -> jid={jid}")
-        logger.info(f"[SEND] safe_mode={self.safe_mode}, numero={numero} -> jid={jid}")
+        # Evolution API v2 expects PLAIN number (e.g. 56963369748), NOT JID format
+        plain_number = jid.replace("@c.us", "")
+        print(f"[SEND] safe_mode={self.safe_mode}, numero={numero} -> plain={plain_number}", flush=True)
+        logger.info(f"[SEND] safe_mode={self.safe_mode}, numero={numero} -> plain={plain_number}")
 
         if self.safe_mode:
-            logger.info(f"[SAFE_MODE] Would send to {jid}: {mensaje[:80]}...")
-            print(f"[SAFE_MODE] Would send to {jid}: {mensaje[:80]}...")
-            return True, f"[SAFE_MODE] Mensaje registrado (no enviado): {jid}"
+            logger.info(f"[SAFE_MODE] Would send to {plain_number}: {mensaje[:80]}...")
+            print(f"[SAFE_MODE] Would send to {plain_number}: {mensaje[:80]}...", flush=True)
+            return True, f"[SAFE_MODE] Mensaje registrado (no enviado): {plain_number}"
 
         try:
             payload = {
-                "number": jid,
+                "number": plain_number,
                 "text": mensaje,
                 "delay": random.randint(1200, 3000),  # Simulate typing delay (ms)
             }
 
-            print(f"[SEND] Calling POST {self.base_url}/message/sendText/{self.instance} -> {jid}")
+            url = f"{self.base_url}/message/sendText/{self.instance}"
+            print(f"[SEND] Calling POST {url} number={plain_number} text_len={len(mensaje)}", flush=True)
+            print(f"[SEND] Payload: number={plain_number}, delay={payload['delay']}", flush=True)
             r = self._session.post(
-                f"{self.base_url}/message/sendText/{self.instance}",
+                url,
                 json=payload,
                 timeout=self.timeout
             )
-            print(f"[SEND] Response: {r.status_code} {r.text[:200]}")
+            print(f"[SEND] Response: {r.status_code} {r.text[:300]}", flush=True)
 
             if r.status_code in (200, 201):
-                logger.info(f"Message sent to {jid}")
-                print(f"[SEND] SUCCESS: Message sent to {jid}")
+                logger.info(f"Message sent to {plain_number}")
+                print(f"[SEND] SUCCESS: Message sent to {plain_number}", flush=True)
                 return True, "Enviado OK"
             else:
-                error_msg = r.text[:200]
+                error_msg = r.text[:300]
                 logger.error(f"Send failed ({r.status_code}): {error_msg}")
+                print(f"[SEND] FAILED: {r.status_code} {error_msg}", flush=True)
                 return False, f"Error HTTP {r.status_code}: {error_msg}"
 
         except requests.Timeout:
+            print(f"[SEND] TIMEOUT after {self.timeout}s", flush=True)
             return False, "Timeout: Evolution API no respondió"
-        except requests.ConnectionError:
+        except requests.ConnectionError as e:
+            print(f"[SEND] CONNECTION ERROR: {e}", flush=True)
             return False, "Error de conexión: No se puede alcanzar Evolution API"
         except Exception as e:
+            print(f"[SEND] EXCEPTION: {type(e).__name__}: {e}", flush=True)
             return False, f"Error: {str(e)}"
 
     def get_last_incoming_message(self, numero: str) -> Optional[Dict]:

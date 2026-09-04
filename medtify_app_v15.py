@@ -2659,8 +2659,11 @@ elif menu_option == "Centro de Notificaciones":
 
         # === LÓGICA DE ENVÍO (BOTÓN 1) CORREGIDA ===
         if iniciar:
+            _safe_val = st.session_state.get('evo_safe_mode', 'NOT_SET')
+            print(f"[BTN] Button clicked! safe_mode from session={_safe_val}", flush=True)
             client = init_evolution_client()
             if not client:
+                print("[BTN] CLIENT IS NONE! Cannot connect to Evolution API", flush=True)
                 st.error("Error crítico: No se pudo conectar a Evolution API. Verifique la configuración del servidor.")
                 st.stop()
             
@@ -2688,9 +2691,11 @@ elif menu_option == "Centro de Notificaciones":
                 update_terminal(f'<span class="log-info">[AUTH]</span> Verificando conexión WhatsApp...')
                 
                 if esperar_login_qr(client):
+                    print("[BTN] WhatsApp CONNECTED! Starting send loop...", flush=True)
                     update_terminal(f'<span class="log-success">[AUTH]</span> Login exitoso. Acceso concedido.')
                     time.sleep(2)
                 else:
+                    print("[BTN] WhatsApp NOT connected. Entering QR flow...", flush=True)
                     update_terminal(f'<span class="log-info">[QR]</span> WhatsApp no conectado. Generando QR...')
                     update_terminal(f'<span class="log-info">[QR] WhatsApp no conectado. Generando QR...</span>')
                     try:
@@ -2720,10 +2725,13 @@ elif menu_option == "Centro de Notificaciones":
                         st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
                         st.stop()
 
+                print("[BTN] Loading sheet data for sending loop...", flush=True)
                 sheet_conn, _, _ = connect_sheet()
                 data = sheet_conn.get_all_values()
+                print(f"[BTN] Sheet has {len(data)} rows (including header)", flush=True)
                 df_proc = pd.DataFrame(data[1:], columns=data[0])
                 df_proc.columns = df_proc.columns.str.strip()
+                print(f"[BTN] df_proc has {len(df_proc)} rows. Columns: {list(df_proc.columns[:10])}", flush=True)
                 
                 total_rows = len(df_proc)
                 progress_bar = st.progress(0)
@@ -2731,6 +2739,7 @@ elif menu_option == "Centro de Notificaciones":
                 # CONTADOR PARA PAUSAS LARGAS (COOL-DOWN)
                 mensajes_enviados_racha = 0 
 
+                print(f"[BTN] Starting loop over {len(df_proc)} rows", flush=True)
                 for idx, row in df_proc.iterrows():
                     # 1. LÓGICA DE DESCANSO LARGO (FRENO DE EMERGENCIA)
                     if mensajes_enviados_racha >= random.randint(5, 9):
@@ -2742,20 +2751,22 @@ elif menu_option == "Centro de Notificaciones":
                     # 2. PAUSA MICRO PARA NO SATURAR CPU (PERO NO FRENA EL BUCLE)
                     time.sleep(0.05)
 
-                    try: 
+                    try:
                         pass  # Evolution API stays connected
 
                         fila = idx + 2
                         nombre = row['NOMBRE_PACIENTE']
                         
-                        es_cambio = str(row['CAMBIO_DE_HORA']).strip().upper() == "SI"
-                        st_rea = str(row['ESTADO_REA']).strip()
-                        st_nor = str(row['ESTADO']).strip()
+                        es_cambio = str(row.get('CAMBIO_DE_HORA', '')).strip().upper() == "SI"
+                        st_rea = str(row.get('ESTADO_REA', '')).strip()
+                        st_nor = str(row.get('ESTADO', '')).strip()
                         
                         ahora = datetime.now().strftime("%d/%m/%Y %H:%M")
                         accion = False
 
                         # DEBUG: Show row state for each iteration
+                        _debug_msg = f'[LOOP] Fila {fila}: {nombre} | es_cambio={es_cambio} | st_rea="{st_rea}" | st_nor="{st_nor}" | safe_mode={client.safe_mode} | cols={list(row.index)[:15]}'
+                        print(_debug_msg, flush=True)
                         update_terminal(f'<span class="log-info">[DEBUG] Fila {fila}: {nombre} | es_cambio={es_cambio} | st_rea="{st_rea}" | st_nor="{st_nor}" | safe_mode={client.safe_mode}</span>')
 
                         # === ACTUALIZACIÓN VISUAL DE DÍAS (OBSERVACION) PARA TODOS ===
@@ -2857,14 +2868,17 @@ elif menu_option == "Centro de Notificaciones":
                             elif not es_cambio and not (1 <= dias <= rango_maximo):
                                 _skip_reasons.append(f"dias={dias} fuera de rango [1-{rango_maximo}]")
                             if _skip_reasons:
+                                print(f"[LOOP] SKIP {nombre}: {' | '.join(_skip_reasons)}", flush=True)
                                 update_terminal(f'<span class="log-info">[SKIP] {nombre}: {" | ".join(_skip_reasons)}</span>')
 
                     except Exception as e_inner:
+                        print(f"[LOOP] EXCEPTION in row {fila}: {type(e_inner).__name__}: {e_inner}", flush=True)
                         update_terminal(f'<span class="log-error">[CRIT] Error en fila {fila}: {str(e_inner)}</span>')
                         continue 
 
                     progress_bar.progress((idx + 1) / total_rows)
 
+                print(f"[LOOP] All {total_rows} rows processed", flush=True)
                 update_terminal(f'<span class="log-success">[DONE] Todas las tareas finalizadas.</span>')
                 st.balloons()
                 st.cache_data.clear() 
@@ -3054,14 +3068,17 @@ elif menu_option == "Centro de Notificaciones":
                             elif not es_cambio and not (1 <= dias <= rango_maximo):
                                 _skip_reasons.append(f"dias={dias} fuera de rango [1-{rango_maximo}]")
                             if _skip_reasons:
+                                print(f"[LOOP] SKIP {nombre}: {' | '.join(_skip_reasons)}", flush=True)
                                 update_terminal(f'<span class="log-info">[SKIP] {nombre}: {" | ".join(_skip_reasons)}</span>')
 
                     except Exception as e_inner:
+                        print(f"[LOOP] EXCEPTION in row {fila}: {type(e_inner).__name__}: {e_inner}", flush=True)
                         update_terminal(f'<span class="log-error">[CRIT] Error en fila {fila}: {str(e_inner)}</span>')
                         continue 
 
                     progress_bar.progress((idx + 1) / total_rows)
 
+                print(f"[LOOP] All {total_rows} rows processed", flush=True)
                 update_terminal(f'<span class="log-success">[DONE] Todas las tareas finalizadas.</span>')
                 st.balloons()
                 st.cache_data.clear() 
