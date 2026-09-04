@@ -22,7 +22,7 @@ class EvolutionClient:
     """HTTP client for Evolution API v2."""
 
     def __init__(self, base_url: str, api_key: str, instance: str = "medtify",
-                 timeout: int = 30, safe_mode: bool = True):
+                 timeout: int = 30, safe_mode: bool = False):
         """
         Args:
             base_url: Evolution API server URL (e.g. http://your-server:8080)
@@ -35,6 +35,9 @@ class EvolutionClient:
         self.api_key = api_key
         self.instance = instance
         self.timeout = timeout
+        # If safe_mode is None or not set, default to False (send real messages)
+        if safe_mode is None:
+            safe_mode = False
         self.safe_mode = safe_mode
         self._session = requests.Session()
         self._session.headers.update({
@@ -43,7 +46,7 @@ class EvolutionClient:
         })
 
     def _url(self, path: str) -> str:
-        return f"{self.base_url}/message/sendText/{self.instance}"
+        return f"{self.base_url}/{path}"
 
     def _check_connection(self) -> bool:
         """Check if Evolution API server is reachable and instance exists."""
@@ -54,10 +57,22 @@ class EvolutionClient:
             )
             if r.status_code == 200:
                 instances = r.json()
+                logger.info(f"[DEBUG _check_connection] Raw response: {instances}")
+                if not instances:
+                    logger.warning("Instance list is empty")
+                    return False
                 for inst in instances:
-                    if inst.get("instance", {}).get("instanceName") == self.instance:
+                    # Evolution API v2.x returns flat objects:
+                    # [{"id":..., "name":"medtify", "connectionStatus":"open", ...}]
+                    # Also handle legacy format: {"instance":{"instanceName":"medtify"}}
+                    inst_name = (
+                        inst.get("name") or
+                        inst.get("instance", {}).get("instanceName") or
+                        ""
+                    )
+                    if inst_name == self.instance:
                         return True
-                logger.warning(f"Instance '{self.instance}' not found in server")
+                logger.warning(f"Instance '{self.instance}' not found in server. Found: {[inst.get('name') for inst in instances]}")
                 return False
             return False
         except Exception as e:
