@@ -2752,6 +2752,9 @@ elif menu_option == "Centro de Notificaciones":
                         ahora = datetime.now().strftime("%d/%m/%Y %H:%M")
                         accion = False
 
+                        # DEBUG: Show row state for each iteration
+                        update_terminal(f'<span class="log-info">[DEBUG] Fila {fila}: {nombre} | es_cambio={es_cambio} | st_rea="{st_rea}" | st_nor="{st_nor}" | safe_mode={client.safe_mode}</span>')
+
                         # === ACTUALIZACIÓN VISUAL DE DÍAS (OBSERVACION) PARA TODOS ===
                         dias = -1
                         if not es_cambio:
@@ -2772,7 +2775,8 @@ elif menu_option == "Centro de Notificaciones":
                                 except: pass
 
                         # === BLOQUE DE ENVÍO REAGENDAMIENTO ===
-                        if es_cambio and st_rea == "":
+                        # Allow retry if st_rea is empty OR was ERROR from previous failed attempt
+                        if es_cambio and st_rea in ("", "ERROR"):
                             # --- AQUI SÍ ESPERAMOS (SOLO SI VAMOS A ENVIAR) ---
                             update_terminal(f'<span class="log-info">⏳ Esperando turno seguro para enviar...</span>')
                             time.sleep(random.uniform(12, 30))
@@ -2803,7 +2807,8 @@ elif menu_option == "Centro de Notificaciones":
                             accion = True
 
                         # === BLOQUE DE ENVÍO RECORDATORIO NORMAL ===
-                        elif not es_cambio and st_nor == "":
+                        # Allow retry if st_nor is empty OR was ERROR from previous failed attempt
+                        elif not es_cambio and st_nor in ("", "ERROR"):
 
                             # === CONDICIÓN DE ENVÍO ===
                             if 1 <= dias <= rango_maximo:
@@ -2838,6 +2843,18 @@ elif menu_option == "Centro de Notificaciones":
                                  if row['OBSERVACION'] == "": 
                                      try: sheet_conn.update_cell(fila, 15, "Fecha Pasada") 
                                      except: pass
+
+                        else:
+                            # Row was skipped - show why in the log
+                            _skip_reasons = []
+                            if es_cambio and st_rea not in ("", "ERROR"):
+                                _skip_reasons.append(f"REAG ya enviado (estado='{st_rea}')")
+                            elif not es_cambio and st_nor not in ("", "ERROR"):
+                                _skip_reasons.append(f"REC ya enviado (estado='{st_nor}')")
+                            elif not es_cambio and not (1 <= dias <= rango_maximo):
+                                _skip_reasons.append(f"dias={dias} fuera de rango [1-{rango_maximo}]")
+                            if _skip_reasons:
+                                update_terminal(f'<span class="log-info">[SKIP] {nombre}: {" | ".join(_skip_reasons)}</span>')
 
                     except Exception as e_inner:
                         update_terminal(f'<span class="log-error">[CRIT] Error en fila {fila}: {str(e_inner)}</span>')
@@ -3020,6 +3037,18 @@ elif menu_option == "Centro de Notificaciones":
                                  if row['OBSERVACION'] == "": 
                                      try: sheet_conn.update_cell(fila, 15, "Fecha Pasada") 
                                      except: pass
+
+                        else:
+                            # Row was skipped - show why in the log
+                            _skip_reasons = []
+                            if es_cambio and st_rea not in ("", "ERROR"):
+                                _skip_reasons.append(f"REAG ya enviado (estado='{st_rea}')")
+                            elif not es_cambio and st_nor not in ("", "ERROR"):
+                                _skip_reasons.append(f"REC ya enviado (estado='{st_nor}')")
+                            elif not es_cambio and not (1 <= dias <= rango_maximo):
+                                _skip_reasons.append(f"dias={dias} fuera de rango [1-{rango_maximo}]")
+                            if _skip_reasons:
+                                update_terminal(f'<span class="log-info">[SKIP] {nombre}: {" | ".join(_skip_reasons)}</span>')
 
                     except Exception as e_inner:
                         update_terminal(f'<span class="log-error">[CRIT] Error en fila {fila}: {str(e_inner)}</span>')
