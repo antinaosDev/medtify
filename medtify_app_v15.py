@@ -1596,12 +1596,12 @@ with st.sidebar:
         secrets_evo_url = st.secrets.get("EVOLUTION_API_URL", "")
         secrets_evo_key = st.secrets.get("EVOLUTION_API_KEY", "")
         secrets_evo_instance = st.secrets.get("EVOLUTION_INSTANCE", "medtify")
-        secrets_safe = st.secrets.get("MEDTIFY_SAFE_MODE", "true").lower() == "true"
+        secrets_safe = st.secrets.get("MEDTIFY_SAFE_MODE", "false").lower() == "true"
     except:
         secrets_evo_url = ""
         secrets_evo_key = ""
         secrets_evo_instance = "medtify"
-        secrets_safe = True
+        secrets_safe = False
     
     evo_url = st.text_input(
         "Server URL",
