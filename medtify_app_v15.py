@@ -21,8 +21,14 @@ logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
 logger = logging.getLogger(__name__)
 
 # Librerías de Automatización
-# Evolution API Client (replaces Selenium)
-from evolution_client import EvolutionClient
+# WhatsApp Client — switchable: Evolution API or OpenWA
+import os as _os
+if _os.environ.get("WHATSAPP_BACKEND", "evolution").lower() == "openwa":
+    from openwa_adapter import OpenWAAdapter as EvolutionClient
+    logger.info("[CONFIG] Using OpenWA backend")
+else:
+    from evolution_client import EvolutionClient
+    logger.info("[CONFIG] Using Evolution API backend")
 import gspread
 from google.oauth2.service_account import Credentials
 from google.auth.transport.requests import Request
@@ -1589,52 +1595,108 @@ with st.sidebar:
     st.markdown("🟢 Conectado a Sheets")
     
     st.markdown("---")
-    st.markdown("### ⚙️ Evolution API")
+    st.markdown("### ⚙️ WhatsApp Backend")
     
-    # Load defaults from st.secrets (Streamlit Cloud) or fallback to manual input
-    try:
-        secrets_evo_url = st.secrets.get("EVOLUTION_API_URL", "")
-        secrets_evo_key = st.secrets.get("EVOLUTION_API_KEY", "")
-        secrets_evo_instance = st.secrets.get("EVOLUTION_INSTANCE", "medtify")
-        secrets_safe = st.secrets.get("MEDTIFY_SAFE_MODE", "false").lower() == "true"
-    except:
-        secrets_evo_url = ""
-        secrets_evo_key = ""
-        secrets_evo_instance = "medtify"
-        secrets_safe = False
-    
-    evo_url = st.text_input(
-        "Server URL",
-        value=st.session_state.get("evo_api_url", secrets_evo_url or "http://localhost:8080"),
-        key="evo_url_input",
-        help="URL del servidor Evolution API"
+    # Backend selector: Evolution API o OpenWA
+    backend_default = "OpenWA" if _os.environ.get("WHATSAPP_BACKEND", "evolution").lower() == "openwa" else "Evolution"
+    whatsapp_backend = st.selectbox(
+        "Backend",
+        ["Evolution", "OpenWA"],
+        index=0 if backend_default == "Evolution" else 1,
+        key="whatsapp_backend_select",
+        help="OpenWA: ligero, mejor soporte de pairing code. Evolution: API clásica."
     )
-    st.session_state["evo_api_url"] = evo_url
     
-    evo_key = st.text_input(
-        "API Key",
-        value=st.session_state.get("evo_api_key", secrets_evo_key),
-        type="password",
-        key="evo_key_input",
-        help="Clave de autenticación de Evolution API"
-    )
-    st.session_state["evo_api_key"] = evo_key
-    
-    evo_instance = st.text_input(
-        "Instance Name",
-        value=st.session_state.get("evo_instance", secrets_evo_instance),
-        key="evo_instance_input",
-        help="Nombre de la instancia de WhatsApp"
-    )
-    st.session_state["evo_instance"] = evo_instance
-    
-    evo_safe = st.checkbox(
-        "Safe Mode (no enviar mensajes)",
-        value=st.session_state.get("evo_safe_mode", secrets_safe),
-        key="evo_safe_mode_input",
-        help="Si está activo, solo registra mensajes sin enviarlos"
-    )
-    st.session_state["evo_safe_mode"] = evo_safe
+    if whatsapp_backend == "OpenWA":
+        # Load defaults from st.secrets (Streamlit Cloud) or fallback to manual input
+        try:
+            secrets_evo_url = st.secrets.get("OPENWA_API_URL", "http://localhost:2785")
+            secrets_evo_key = st.secrets.get("OPENWA_API_KEY", "")
+            secrets_evo_instance = st.secrets.get("OPENWA_SESSION_ID", "medtify-session")
+            secrets_safe = st.secrets.get("MEDTIFY_SAFE_MODE", "false").lower() == "true"
+        except:
+            secrets_evo_url = "http://localhost:2785"
+            secrets_evo_key = ""
+            secrets_evo_instance = "medtify-session"
+            secrets_safe = False
+        
+        evo_url = st.text_input(
+            "OpenWA Server URL",
+            value=st.session_state.get("evo_api_url", secrets_evo_url),
+            key="evo_url_input",
+            help="URL del servidor OpenWA API Gateway (puerto 2785)"
+        )
+        st.session_state["evo_api_url"] = evo_url
+        
+        evo_key = st.text_input(
+            "OpenWA API Key",
+            value=st.session_state.get("evo_api_key", secrets_evo_key),
+            type="password",
+            key="evo_key_fw",
+            help="Clave de autenticación de OpenWA"
+        )
+        st.session_state["evo_api_key"] = evo_key
+        
+        evo_instance = st.text_input(
+            "Session ID",
+            value=st.session_state.get("evo_instance", secrets_evo_instance),
+            key="openwa_instance_input",
+            help="Nombre de la sesión de WhatsApp"
+        )
+        st.session_state["evo_instance"] = evo_instance
+        
+        evo_safe = st.checkbox(
+            "Safe Mode (no enviar mensajes)",
+            value=st.session_state.get("evo_safe_mode", secrets_safe),
+            key="openwa_safe_mode_input",
+            help="Si está activo, solo registra mensajes sin enviarlos"
+        )
+        st.session_state["evo_safe_mode"] = evo_safe
+    else:
+        # Load defaults from st.secrets (Streamlit Cloud) or fallback to manual input
+        try:
+            secrets_evo_url = st.secrets.get("EVOLUTION_API_URL", "")
+            secrets_evo_key = st.secrets.get("EVOLUTION_API_KEY", "")
+            secrets_evo_instance = st.secrets.get("EVOLUTION_INSTANCE", "medtify")
+            secrets_safe = st.secrets.get("MEDTIFY_SAFE_MODE", "false").lower() == "true"
+        except:
+            secrets_evo_url = ""
+            secrets_evo_key = ""
+            secrets_evo_instance = "medtify"
+            secrets_safe = False
+        
+        evo_url = st.text_input(
+            "Server URL",
+            value=st.session_state.get("evo_api_url", secrets_evo_url or "http://localhost:8080"),
+            key="evo_url_input",
+            help="URL del servidor Evolution API"
+        )
+        st.session_state["evo_api_url"] = evo_url
+        
+        evo_key = st.text_input(
+            "API Key",
+            value=st.session_state.get("evo_api_key", secrets_evo_key),
+            type="password",
+            key="evo_key_input",
+            help="Clave de autenticación de Evolution API"
+        )
+        st.session_state["evo_api_key"] = evo_key
+        
+        evo_instance = st.text_input(
+            "Instance Name",
+            value=st.session_state.get("evo_instance", secrets_evo_instance),
+            key="evo_instance_input",
+            help="Nombre de la instancia de WhatsApp"
+        )
+        st.session_state["evo_instance"] = evo_instance
+        
+        evo_safe = st.checkbox(
+            "Safe Mode (no enviar mensajes)",
+            value=st.session_state.get("evo_safe_mode", secrets_safe),
+            key="evo_safe_mode_input",
+            help="Si está activo, solo registra mensajes sin enviarlos"
+        )
+        st.session_state["evo_safe_mode"] = evo_safe
     
     # Connection status indicator
     st.markdown("---")
@@ -1642,9 +1704,9 @@ with st.sidebar:
     
     try:
         test_client = EvolutionClient(
-            base_url=st.session_state.get("evo_api_url", "http://localhost:8080"),
+            base_url=st.session_state.get("evo_api_url", "http://localhost:2785" if backend_default == "OpenWA" else "http://localhost:8080"),
             api_key=st.session_state.get("evo_api_key", ""),
-            instance=st.session_state.get("evo_instance", "medtify"),
+            instance=st.session_state.get("evo_instance", "medtify-session" if backend_default == "OpenWA" else "medtify"),
             safe_mode=st.session_state.get("evo_safe_mode", True)
         )
         if test_client._check_connection():
@@ -1653,10 +1715,16 @@ with st.sidebar:
                 st.success("✅ WhatsApp Conectado")
             else:
                 st.warning("⚠️ WhatsApp No Conectado")
-                st.info("Abre Evolution Manager para escanear QR")
+                if backend_default == "OpenWA":
+                    st.info("Usa el pairing code o escanea QR en OpenWA Dashboard")
+                else:
+                    st.info("Abre Evolution Manager para escanear QR")
         else:
-            st.error("❌ Evolution API no responde")
-            st.info("Verifica que el VPS esté corriendo")
+            st.error("❌ Backend no responde")
+            if backend_default == "OpenWA":
+                st.info("Verifica que OpenWA esté corriendo en el puerto 2785")
+            else:
+                st.info("Verifica que el VPS esté corriendo")
     except:
         st.warning("⚠️ No se pudo verificar conexión")
 
