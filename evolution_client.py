@@ -161,9 +161,12 @@ class EvolutionClient:
             (success, log_message)
         """
         jid = self.format_phone(numero)
+        print(f"[SEND] safe_mode={self.safe_mode}, numero={numero} -> jid={jid}")
+        logger.info(f"[SEND] safe_mode={self.safe_mode}, numero={numero} -> jid={jid}")
 
         if self.safe_mode:
             logger.info(f"[SAFE_MODE] Would send to {jid}: {mensaje[:80]}...")
+            print(f"[SAFE_MODE] Would send to {jid}: {mensaje[:80]}...")
             return True, f"[SAFE_MODE] Mensaje registrado (no enviado): {jid}"
 
         try:
@@ -173,14 +176,17 @@ class EvolutionClient:
                 "delay": random.randint(1200, 3000),  # Simulate typing delay (ms)
             }
 
+            print(f"[SEND] Calling POST {self.base_url}/message/sendText/{self.instance} -> {jid}")
             r = self._session.post(
                 f"{self.base_url}/message/sendText/{self.instance}",
                 json=payload,
                 timeout=self.timeout
             )
+            print(f"[SEND] Response: {r.status_code} {r.text[:200]}")
 
             if r.status_code in (200, 201):
                 logger.info(f"Message sent to {jid}")
+                print(f"[SEND] SUCCESS: Message sent to {jid}")
                 return True, "Enviado OK"
             else:
                 error_msg = r.text[:200]

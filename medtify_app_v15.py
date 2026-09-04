@@ -2692,6 +2692,7 @@ elif menu_option == "Centro de Notificaciones":
                     time.sleep(2)
                 else:
                     update_terminal(f'<span class="log-info">[QR]</span> WhatsApp no conectado. Generando QR...')
+                    update_terminal(f'<span class="log-info">[QR] WhatsApp no conectado. Generando QR...</span>')
                     try:
                         qr_code = client.get_qr_code()
                         if qr_code:
@@ -2699,22 +2700,24 @@ elif menu_option == "Centro de Notificaciones":
                             st.image(qr_code, caption="Escanea con WhatsApp", width=300)
                             st.info("1. Abre WhatsApp > Dispositivos vinculados > Vincular dispositivo | 2. Escanea este codigo")
                             import time as _time
-                            for i in range(60):
+                            for i in range(90):  # 3 minutes max
                                 _time.sleep(2)
                                 if esperar_login_qr(client):
-                                    st.success("WhatsApp conectado!")
-                                    st.rerun()
+                                    update_terminal(f'<span class="log-success">[QR] WhatsApp conectado! Continuando envio...</span>')
+                                    st.success("WhatsApp conectado! Iniciando envios...")
+                                    time.sleep(2)
                                     break
                             else:
-                                st.error("Tiempo agotado. Intenta de nuevo.")
+                                st.error("Tiempo agotado. Conecta WhatsApp y vuelve a intentar.")
+                                update_terminal(f'<span class="log-error">[QR] Tiempo agotado esperando conexion</span>')
                                 st.stop()
                         else:
                             st.error("No se pudo generar QR. Verifica Evolution API.")
-                            st.info("Abre http://79.98.29.50:3000 para generar QR manualmente")
+                            st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
                             st.stop()
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
-                        st.info("Abre http://79.98.29.50:3000 para generar QR manualmente")
+                        st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
                         st.stop()
 
                 sheet_conn, _, _ = connect_sheet()
@@ -2903,6 +2906,7 @@ elif menu_option == "Centro de Notificaciones":
                     time.sleep(2)
                 else:
                     update_terminal(f'<span class="log-info">[QR]</span> WhatsApp no conectado. Generando QR...')
+                    update_terminal(f'<span class="log-info">[QR] WhatsApp no conectado. Generando QR...</span>')
                     try:
                         qr_code = client.get_qr_code()
                         if qr_code:
@@ -2910,22 +2914,24 @@ elif menu_option == "Centro de Notificaciones":
                             st.image(qr_code, caption="Escanea con WhatsApp", width=300)
                             st.info("1. Abre WhatsApp > Dispositivos vinculados > Vincular dispositivo | 2. Escanea este codigo")
                             import time as _time
-                            for i in range(60):
+                            for i in range(90):  # 3 minutes max
                                 _time.sleep(2)
                                 if esperar_login_qr(client):
-                                    st.success("WhatsApp conectado!")
-                                    st.rerun()
+                                    update_terminal(f'<span class="log-success">[QR] WhatsApp conectado! Continuando envio...</span>')
+                                    st.success("WhatsApp conectado! Iniciando envios...")
+                                    time.sleep(2)
                                     break
                             else:
-                                st.error("Tiempo agotado. Intenta de nuevo.")
+                                st.error("Tiempo agotado. Conecta WhatsApp y vuelve a intentar.")
+                                update_terminal(f'<span class="log-error">[QR] Tiempo agotado esperando conexion</span>')
                                 st.stop()
                         else:
                             st.error("No se pudo generar QR. Verifica Evolution API.")
-                            st.info("Abre http://79.98.29.50:3000 para generar QR manualmente")
+                            st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
                             st.stop()
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
-                        st.info("Abre http://79.98.29.50:3000 para generar QR manualmente")
+                        st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
                         st.stop()
 
                 sheet_conn, _, _ = connect_sheet()
@@ -3100,6 +3106,7 @@ elif menu_option == "Centro de Notificaciones":
                     time.sleep(2)
                 else:
                     update_terminal(f'<span class="log-info">[QR]</span> WhatsApp no conectado. Generando QR...')
+                    update_terminal(f'<span class="log-info">[QR] WhatsApp no conectado. Generando QR...</span>')
                     try:
                         qr_code = client.get_qr_code()
                         if qr_code:
@@ -3107,22 +3114,24 @@ elif menu_option == "Centro de Notificaciones":
                             st.image(qr_code, caption="Escanea con WhatsApp", width=300)
                             st.info("1. Abre WhatsApp > Dispositivos vinculados > Vincular dispositivo | 2. Escanea este codigo")
                             import time as _time
-                            for i in range(60):
+                            for i in range(90):  # 3 minutes max
                                 _time.sleep(2)
                                 if esperar_login_qr(client):
-                                    st.success("WhatsApp conectado!")
-                                    st.rerun()
+                                    update_terminal(f'<span class="log-success">[QR] WhatsApp conectado! Continuando envio...</span>')
+                                    st.success("WhatsApp conectado! Iniciando envios...")
+                                    time.sleep(2)
                                     break
                             else:
-                                st.error("Tiempo agotado. Intenta de nuevo.")
+                                st.error("Tiempo agotado. Conecta WhatsApp y vuelve a intentar.")
+                                update_terminal(f'<span class="log-error">[QR] Tiempo agotado esperando conexion</span>')
                                 st.stop()
                         else:
                             st.error("No se pudo generar QR. Verifica Evolution API.")
-                            st.info("Abre http://79.98.29.50:3000 para generar QR manualmente")
+                            st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
                             st.stop()
                     except Exception as e:
                         st.error(f"Error: {str(e)}")
-                        st.info("Abre http://79.98.29.50:3000 para generar QR manualmente")
+                        st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
                         st.stop()
 
                 sheet_conn, _, _ = connect_sheet()
