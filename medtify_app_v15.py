@@ -1673,6 +1673,10 @@ with st.sidebar:
     st.markdown(f"**Estado Sistema:**")
     st.markdown("🟢 Conectado a Sheets")
     
+    # Initialize session state for logout confirmation
+    if "confirm_logout" not in st.session_state:
+        st.session_state["confirm_logout"] = False
+    
     if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
         st.markdown("---")
         st.markdown("### ⚙️ WhatsApp Backend")
@@ -1791,25 +1795,91 @@ with st.sidebar:
             )
             if test_client._check_connection():
                 qr_status = test_client.check_qr_status()
+                instance_details = test_client.get_instance_details()
+                
                 if qr_status.get("connected"):
                     st.success("✅ WhatsApp Conectado")
+                    
+                    # Mostrar detalles de la cuenta conectada
+                    if instance_details:
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**📱 Número:**")
+                            phone = instance_details.get("phone", "")
+                            if phone:
+                                formatted_phone = f"+{phone[:2]} {phone[2:3]} {phone[3:7]} {phone[7:]}"
+                                st.info(f"{formatted_phone}")
+                            else:
+                                st.info("No disponible")
+                        with col2:
+                            st.markdown("**👤 Nombre:**")
+                            profile_name = instance_details.get("profile_name", "")
+                            st.info(f"{profile_name}" if profile_name else "No disponible")
+                        
+                        # Estadísticas
+                        st.markdown("**📊 Estadísticas:**")
+                        stats_col1, stats_col2, stats_col3 = st.columns(3)
+                        with stats_col1:
+                            st.metric("Mensajes", instance_details.get("message_count", 0))
+                        with stats_col2:
+                            st.metric("Contactos", instance_details.get("contact_count", 0))
+                        with stats_col3:
+                            st.metric("Chats", instance_details.get("chat_count", 0))
                 else:
                     st.warning("⚠️ WhatsApp No Conectado")
                     if backend_default == "OpenWA":
                         st.info("Usa el pairing code o escanea QR en OpenWA Dashboard")
                     else:
-                        st.info("Abre Evolution Manager para escanear QR")
+                        st.info("Escanea el QR para conectar")
+                        
+                        # Botón para mostrar QR
+                        if st.button("📱 Mostrar QR para Conectar", key="show_qr_btn"):
+                            qr_code = test_client.get_qr_code()
+                            if qr_code:
+                                st.image(qr_code, caption="Escanea este QR con WhatsApp", width=300)
+                            else:
+                                st.error("No se pudo obtener el QR. Verifica que Evolution API esté corriendo.")
+                
+                # Botones de gestión
+                st.markdown("---")
+                st.markdown("**🔧 Gestión de Sesión:**")
+                col_btn1, col_btn2 = st.columns(2)
+                
+                with col_btn1:
+                    if st.button("🔄 Reconectar", key="reconnect_btn"):
+                        with st.spinner("Reconectando..."):
+                            qr_code = test_client.reconnect()
+                            if qr_code:
+                                st.success("QR generado. Escanea con WhatsApp.")
+                                st.image(qr_code, caption="Nuevo QR para reconexión", width=300)
+                            else:
+                                st.warning("No se pudo generar QR. Intenta de nuevo.")
+                
+                with col_btn2:
+                    if st.button("🚪 Cerrar Sesión", key="logout_btn", type="secondary"):
+                        if st.session_state.get("confirm_logout"):
+                            with st.spinner("Cerrando sesión..."):
+                                if test_client.logout():
+                                    st.success("Sesión cerrada. WhatsApp desconectado.")
+                                    st.session_state["confirm_logout"] = False
+                                    st.rerun()
+                                else:
+                                    st.error("No se pudo cerrar la sesión.")
+                        else:
+                            st.session_state["confirm_logout"] = True
+                            st.warning("⚠️ ¿Estás seguro? Se cerrará la sesión de WhatsApp y tendrás que escanear el QR de nuevo.")
+                
                 st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
             else:
                 st.error("❌ Backend no responde")
                 if backend_default == "OpenWA":
                     st.info("Verifica que OpenWA esté corriendo en el puerto 2785")
                 else:
-                    st.info("🔧 **Solución:** En Termux, ejecuta `bash ~/start_ngrok.sh` para iniciar el túnel")
-                    st.info("💡 **URL fija:** Actualiza la URL en Streamlit Cloud → Settings → Secrets con `EVOLUTION_API_URL`")
+                    st.info("🔧 **Solución:** En Termux, ejecuta `bash ~/start_auto.sh` para iniciar el túnel")
+                    st.info("💡 La URL se actualiza automáticamente en GitHub")
                 st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
-        except:
-            st.warning("⚠️ No se pudo verificar conexión")
+        except Exception as e:
+            st.warning(f"⚠️ No se pudo verificar conexión: {e}")
 
 # --- CARGA DE DATOS (CON CACHÉ INTELIGENTE) ---
 df = get_data_fresh(MASTER_ACCOUNT_ID)

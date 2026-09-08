@@ -130,6 +130,105 @@ class EvolutionClient:
             logger.error(f"Error getting QR: {e}")
             return None
 
+    def get_instance_details(self) -> Optional[Dict]:
+        """
+        Get instance details including phone number and profile name.
+        Returns dict with instance info or None.
+        """
+        try:
+            r = self._session.get(
+                f"{self.base_url}/instance/fetchInstances",
+                timeout=10
+            )
+            if r.status_code == 200:
+                instances = r.json()
+                for inst in instances:
+                    inst_name = inst.get("name", "")
+                    if inst_name == self.instance:
+                        # Extract phone number from ownerJid (format: 569XXXXXXXX@s.whatsapp.net)
+                        owner_jid = inst.get("ownerJid", "")
+                        phone = owner_jid.replace("@s.whatsapp.net", "") if "@s.whatsapp.net" in owner_jid else ""
+                        
+                        return {
+                            "name": inst.get("name", ""),
+                            "phone": phone,
+                            "profile_name": inst.get("profileName", ""),
+                            "profile_pic": inst.get("profilePicUrl", ""),
+                            "connection_status": inst.get("connectionStatus", ""),
+                            "owner_jid": owner_jid,
+                            "integration": inst.get("integration", ""),
+                            "created_at": inst.get("createdAt", ""),
+                            "updated_at": inst.get("updatedAt", ""),
+                            "message_count": inst.get("_count", {}).get("Message", 0),
+                            "contact_count": inst.get("_count", {}).get("Contact", 0),
+                            "chat_count": inst.get("_count", {}).get("Chat", 0),
+                        }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting instance details: {e}")
+            return None
+
+    def logout(self) -> bool:
+        """
+        Logout/disconnect the WhatsApp instance.
+        This will require scanning QR again to reconnect.
+        Returns True if successful.
+        """
+        try:
+            r = self._session.delete(
+                f"{self.base_url}/instance/logout/{self.instance}",
+                timeout=10
+            )
+            if r.status_code == 200:
+                logger.info(f"Instance '{self.instance}' logged out successfully")
+                return True
+            else:
+                logger.error(f"Logout failed: {r.status_code} - {r.text[:200]}")
+                return False
+        except Exception as e:
+            logger.error(f"Error during logout: {e}")
+            return False
+
+    def disconnect(self) -> bool:
+        """
+        Disconnect the WhatsApp instance without full logout.
+        Can be reconnected by scanning QR again.
+        Returns True if successful.
+        """
+        try:
+            r = self._session.get(
+                f"{self.base_url}/instance/disconnect/{self.instance}",
+                timeout=10
+            )
+            if r.status_code == 200:
+                logger.info(f"Instance '{self.instance}' disconnected successfully")
+                return True
+            else:
+                logger.error(f"Disconnect failed: {r.status_code} - {r.text[:200]}")
+                return False
+        except Exception as e:
+            logger.error(f"Error during disconnect: {e}")
+            return False
+
+    def reconnect(self) -> Optional[str]:
+        """
+        Reconnect the instance and get new QR code.
+        Returns base64 QR code string or None.
+        """
+        try:
+            # First try to connect
+            r = self._session.get(
+                f"{self.base_url}/instance/connect/{self.instance}",
+                timeout=15
+            )
+            if r.status_code == 200:
+                data = r.json()
+                return data.get("base64", None)
+            return None
+        except Exception as e:
+            logger.error(f"Error reconnecting: {e}")
+            return None
+
     def format_phone(self, numero: str) -> str:
         """
         Format phone number to WhatsApp JID format.
