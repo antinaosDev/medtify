@@ -1667,9 +1667,9 @@ with st.sidebar:
     else:
         # Load defaults from st.secrets (Streamlit Cloud) or fallback to manual input
         try:
-            secrets_evo_url = st.secrets.get("EVOLUTION_API_URL", "") or EVO_API_URL_CODE
-            secrets_evo_key = st.secrets.get("EVOLUTION_API_KEY", "") or EVO_API_KEY_CODE
-            secrets_evo_instance = st.secrets.get("EVOLUTION_INSTANCE", "") or EVO_INSTANCE_CODE
+            secrets_evo_url = EVO_API_URL_CODE or st.secrets.get("EVOLUTION_API_URL", "")
+            secrets_evo_key = EVO_API_KEY_CODE or st.secrets.get("EVOLUTION_API_KEY", "")
+            secrets_evo_instance = EVO_INSTANCE_CODE or st.secrets.get("EVOLUTION_INSTANCE", "")
             secrets_safe = st.secrets.get("MEDTIFY_SAFE_MODE", "false").lower() == "true"
         except:
             secrets_evo_url = EVO_API_URL_CODE
