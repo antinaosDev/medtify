@@ -217,46 +217,71 @@ class EvolutionClient:
             or None if no messages found
         """
         jid = self.format_phone(numero)
+        plain = jid.replace("@c.us", "")
+        jid_sw = f"{plain}@s.whatsapp.net"
 
         try:
-            r = self._session.get(
-                f"{self.base_url}/chat/findMessages/{self.instance}",
-                json={
-                    "where": {
-                        "key": {
-                            "remoteJid": jid,
-                            "fromMe": False
-                        }
-                    },
-                    "limit": 5,
-                    "order": "DESC"
-                },
-                timeout=self.timeout
-            )
+            def _find(where: dict) -> list:
+                try:
+                    r = self._session.post(
+                        f"{self.base_url}/chat/findMessages/{self.instance}",
+                        json={
+                            "where": where,
+                            "limit": 50,
+                            "offset": 0,
+                            "order": "DESC"
+                        },
+                        timeout=self.timeout
+                    )
+                    print(f"[READ] POST findMessages http={r.status_code}", flush=True)
+                    if r.status_code != 200:
+                        print(f"[READ] body={r.text[:200]}", flush=True)
+                        return []
+                    data = r.json()
+                    recs = (data or {}).get("messages", {}).get("records", [])
+                    total = (data or {}).get("messages", {}).get("total", 0)
+                    print(f"[READ] records={len(recs)} total={total}", flush=True)
+                    return recs
+                except Exception as e:
+                    logger.error(f"Error in _find for {jid_sw}: {e}")
+                    print(f"[READ] EXCEPTION: {e}", flush=True)
+                    return []
 
-            if r.status_code == 200:
-                messages = r.json()
-                if messages and len(messages) > 0:
-                    msg = messages[0]
-                    key = msg.get("key", {})
-                    message_data = msg.get("message", {})
+            candidates = _find({"key": {"remoteJidAlt": jid_sw}})
+            if not candidates:
+                candidates = _find({"key": {"remoteJid": jid_sw}})
 
-                    # Extract text content
-                    body = message_data.get("conversation", "")
+            for msg in candidates:
+                key = msg.get("key", {}) or {}
+                if key.get("fromMe"):
+                    continue
+                message_data = msg.get("message", {}) or {}
+
+                body = ""
+                if isinstance(message_data, dict):
+                    body = message_data.get("conversation", "") or ""
                     if not body:
-                        body = message_data.get("extendedTextMessage", {}).get("text", "")
+                        etm = message_data.get("extendedTextMessage") or {}
+                        body = etm.get("text", "") or ""
+                    if not body:
+                        img = message_data.get("imageMessage") or {}
+                        body = img.get("caption", "") or ""
+                if not body:
+                    continue
 
-                    return {
-                        "body": body,
-                        "timestamp": msg.get("messageTimestamp", ""),
-                        "fromMe": key.get("fromMe", False),
-                        "sender": key.get("participant", jid),
-                        "raw": msg
-                    }
+                return {
+                    "body": body,
+                    "timestamp": msg.get("messageTimestamp", ""),
+                    "fromMe": False,
+                    "sender": key.get("participant") or key.get("remoteJid") or jid,
+                    "raw": msg
+                }
+
+            print(f"[READ] No incoming messages found for {jid_sw}", flush=True)
             return None
 
         except Exception as e:
-            logger.error(f"Error fetching messages for {jid}: {e}")
+            logger.error(f"Error fetching messages for {jid_sw}: {e}")
             return None
 
     def verificar_respuesta(self, numero: str, keywords_si: List[str] = None,
@@ -290,6 +315,10 @@ class EvolutionClient:
 
         msg_clean = body.lower()
 
+        # STEP 0 (v14 parity): si el último mensaje es notificación del bot → PENDIENTE
+        if es_notificacion(body):
+            return "PENDIENTE", "Ultimo mensaje es notificacion del bot, paciente aun no responde"
+
         # 1. Check negations (priority)
         for frase in keywords_no:
             frase_clean = frase.lower()
@@ -312,40 +341,122 @@ class EvolutionClient:
         return "AMBIGUO", f"No clasificado: {body}"
 
 
-# === DEFAULT KEYWORDS (same as medtify_app.py) ===
+# === DEFAULT KEYWORDS (sincronizadas con master medtify_app_v15.py / v14) ===
 DEFAULT_RESPUESTAS_SI = [
     "sí", "si", "sip", "sii", "siii", "sipo", "sipu", "sipi", "sí, confirmo", "confirmo",
-    "confirmado", "confirmada", "confirmadísimo", "claro", "claro que sí",
-    "por supuesto", "obvio", "obvio que sí", "obvio po", "obvio que voy",
-    "de todas maneras", "de todas formas", "de una", "de pana",
-    "altiro", "altiro sí", "altiro voy", "bacán", "bacán voy",
-    "filete", "la raja voy", "pulento", "terrible sí", "ahí estaré",
-    "voy", "voy sí", "sí voy", "sí puedo", "puedo ir",
+    "confirmado", "confirmada", "confirmadísimo", "confirmadísima", "claro", "claro que sí",
+    "por supuesto", "obvio", "obvio que sí", "obviao", "obvio po", "obvio que voy",
+    "obvio hermano voy", "de todas maneras", "de todas formas", "de una", "de pana",
+    "de pana sí", "de pana voy", "altiro", "altiro sí", "altiro voy", "bacán", "bacán voy",
+    "filete", "la raja voy", "pulento", "terrible sí", "terrible filete voy", "ahí estaré",
+    "voy", "voy sí", "sí voy", "sí voy a ir", "sí alcanzo", "sí puedo", "puedo ir",
     "confirmo asistencia", "confirmo la hora", "confirmo cita", "asistiré", "llego",
-    "llegaré", "cuento con ir", "ningún problema", "ningún drama",
-    "todo bien", "todo ok", "ok", "okay", "okey", "oki", "okis",
-    "dale sí", "dale no más", "vale", "vale sí", "va", "vamos",
-    "yes", "simon", "afirmativo", "positivo", "sí, sin falta", "sí, estaré ahí",
-    "me sirve", "me acomoda", "está bien", "está perfect", "perfecto",
-    "excelente", "súper", "joya", "regio",
-    "ya", "ya sí", "ya voy", "ya confirmo", "ya estaré", "listo",
-    "listo confirmo", "todo listo", "listo voy",
-    "simonazo", "seeh", "seee", "seeeh",
-    "vamos pa' esa", "vamos nomás", "vamo'",
-    "✔️", "👍", "👌", "🙌", "🤙", "💯", "🔥 voy", "✨ sí"
+    "llego sí", "llegaré", "cuento con ir", "cualquier cosa llego", "ningún problema",
+    "ningún drama", "todo bien", "todo ok", "ok", "okay", "okey", "oki", "okis",
+    "dale sí", "dale no más", "vale", "vale sí", "va", "vamos", "yes", "yes bro",
+    "simon", "affirmative", "afirmativo", "positivo", "sí, sin falta", "sí, estaré ahí",
+    "me sirve", "me acomoda", "está bien", "está perfect", "perfect", "perfecto",
+    "excelente", "súper", "super bien", "joya", "joyita", "regio", "maravilloso",
+    "ya", "ya sí", "ya bacán", "ya voy", "ya confirmo", "ya estaré", "listo", "lito",
+    "listo confirmo", "listoco", "todo listo", "listo entonces", "listo voy",
+    "confirmadito", "simonazo", "seeh", "seee", "seeeh", "sehhh", "seee si",
+    "vamos pa’ esa", "vamos nomás", "vamo’", "vamo altiro", "✔️", "👍", "👌", "🙌",
+    "🤙", "💯", "🔥 voy", "🍀 voy", "✨ sí"
 ]
 
 DEFAULT_RESPUESTAS_NO = [
-    "no", "nop", "nope", "nah", "nada", "para nada", "en absoluto",
-    "no puedo", "no voy", "no asistiré", "no me es posible",
-    "cancelo", "cancelada", "cancelado", "anular", "anulada",
-    "rechazar", "rechazado", "rechazada",
-    "mejor no", "prefiero no", "no me conviene", "no me sirve",
-    "otra vez no", "lástima", "qué pena", "qué lástima",
-    "no alcanzo", "no me da el tiempo", "estoy ocupado", "estoy ocupada",
-    "tengo otra cosa", "tengo otro compromiso", "no dispongo",
-    "imposible", "no hay chance", "no da", "se me complica",
-    "no creo", "dudo que pueda", "difícil",
-    "😔", "😞", "😢", "❌", "🚫",
-    "gracias pero no", "agradezco pero no",
+    "no", "nop", "nope", "noo", "nooo", "noppo", "nopo", "no puedo", "no puedo ir",
+    "no voy", "no alcanzo", "no me da", "no me da el tiempo", "no me sirve",
+    "no me acomoda", "no estoy disponible", "no podré asistir", "no asistiré", "no iré",
+    "no llego", "no estaré", "no me es posible", "me es imposible", "imposible",
+    "negativo", "lamentablemente no puedo", "tengo que cancelar", "cancelo", "cancelado",
+    "cancelada", "cancelar hora", "cancelar asistencia", "reagendar", "quiero reagendar",
+    "necesito reagendar", "necesito otra hora", "cambiar hora", "no puedo a esa hora",
+    "no puedo ese día", "no puedo no más", "no me tinca", "no me resulta",
+    "hoy no me resulta", "no puedo sorry", "sorry no puedo", "no sorry", "no quiero ir",
+    "prefiero no ir", "voy a faltar", "estoy ocupado", "estoy tapado de cosas",
+    "estoy enfermo", "estoy enferma", "estoy pal gato", "estoy pa’ la cagá",
+    "no tengo tiempo", "no llego ni cagando", "no alcanzo ni al metro", "no será posible",
+    "no cacho si pueda", "no estoy en condiciones", "no doy más", "no puedo manejar",
+    "mi pega no me deja", "tengo reunión", "no la hago", "no me da la agenda",
+    "no lo lograré", "🚫", "❌", "🛑", "🙅", "🙅‍♂️", "🙅‍♀️"
 ]
+
+
+# === MARKERS DE NOTIFICACIÓN DEL BOT (port desde medtify_app_rotacion.py v14) ===
+NOTIF_MARKERS = [
+    # Titulos de recordatorio
+    'recordatorio hora medica',
+    'aviso de hora medica',
+    'informacion de hora medica',
+    'informa cancelacion',
+    'aviso de cancelacion',
+    'informa hora medica cancelada',
+    'hora medica cancelada',
+
+    # Frases de introduccion
+    'le recordamos su',
+    'no olvide su hora agendada',
+    'le enviamos los detalles',
+    'su proxima atencion de salud',
+    'lamentamos informarle',
+    'por razones de fuerza mayor',
+    'le comunicamos que',
+    'su hora medica ha sido cancelada',
+
+    # Datos de la cita
+    'su cita es el',
+    'su hora es el',
+    'su turno es el',
+    'fecha:', 'hora:', 'profesional:', 'motivo consulta:', 'lugar:',
+
+    # Confirmacion
+    'para confirmar su asistencia, responda',
+    'responda con "si" para confirmar',
+    'confirme su asistencia respondiendo',
+    'para confirmar su nueva hora',
+
+    # Importante / instrucciones
+    'importante: llegar 15 minutos',
+    'presentar su cedula de identidad',
+    'presentar su carnet de control',
+    'carnet de control de paciente cronico',
+    'llegar 15 minutos antes',
+    'presentar su',
+    'horario de atencion',
+
+    # Despedida
+    'saluda atentamente',
+    'saludos cordiales',
+    'se despide,',
+    'equipo some',
+    'cesfam cholchol',
+
+    # Mensaje automatico
+    'este es un mensaje automatico',
+    'este es un mensaje automático',
+    'mensaje automatico. si necesitas',
+    'visita nuestras dependencias',
+
+    # Reagendamiento especifico
+    'hora cancelada:',
+    'nueva hora reagendada:',
+    'agradecemos su comprension',
+    'lamentamos los inconvenientes',
+    'pedimos disculpas por las molestias',
+    'nueva hora reagendada',
+]
+
+
+def es_notificacion(texto):
+    """Requiere 2+ markers O >200 chars con 1 marker para clasificar como notificacion (port v14)."""
+    t = texto.lower().strip()
+    matches = sum(1 for pat in NOTIF_MARKERS if pat in t)
+    if matches >= 2:
+        print(f"  -> NOTIFICATION ({matches} markers): {t[:60]}...", flush=True)
+        return True
+    if len(t) > 200 and matches >= 1:
+        print(f"  -> NOTIFICATION (long + {matches} marker): {t[:60]}...", flush=True)
+        return True
+    print(f"  -> NOT notification ({matches} markers, {len(t)} chars): {t[:60]}...", flush=True)
+    return False

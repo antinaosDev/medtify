@@ -985,6 +985,10 @@ def generar_analisis_clinico(df):
 # === MODIFICADA: VERSIÓN HUMANIZADA (ANTI-BAN) ===
 def enviar_mensaje_wsp(client, numero, mensaje):
     """Send WhatsApp message via Evolution API (replaces Selenium web scraping)."""
+    # Validación de teléfono (port v14): skip si inválido
+    if not format_whatsapp_phone(numero):
+        print(f"[SEND] [SKIP] Telefono invalido: {numero}", flush=True)
+        return False, f"Teléfono inválido: {numero}"
     # Small delay to simulate human behavior
     time.sleep(random.uniform(1.0, 2.0))
     return client.send_message(numero, mensaje)
@@ -1057,6 +1061,65 @@ Equipo CESFAM Cholchol
 def verificar_respuestas_wsp(client, numero, keywords_si=None, keywords_no=None):
     """Verify patient response via Evolution API (replaces Selenium DOM scraping)."""
     return client.verificar_respuesta(numero, keywords_si, keywords_no)
+
+
+def refresh_template_from_sheets(tipo):
+    """
+    Lee el template desde Google Sheets forzando recalculo para obtener variación aleatoria.
+    tipo: 'MSG_AGEND' o 'MSG_REAGEND'
+    """
+    try:
+        creds_dict = APP_CONFIG['credenciales_finales']
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_url(URL_ADMIN_MASTER).sheet1
+        
+        # Forzar recalculo escribiendo RAND() en celda auxiliar
+        sheet.update_acell('Z1', '=RAND()')
+        time.sleep(1)  # Esperar recalculo
+        
+        # Leer la fila de config (fila 2)
+        row_data = sheet.row_values(2)
+        headers = sheet.row_values(1)
+        
+        # Buscar la columna del template
+        template_value = ''
+        for i, h in enumerate(headers):
+            if tipo == 'MSG_AGEND' and h.strip() == 'MENSAJE_AGEND':
+                template_value = row_data[i] if i < len(row_data) else ''
+                break
+            elif tipo == 'MSG_REAGEND' and h.strip() == 'MENSAJE_REAGEND':
+                template_value = row_data[i] if i < len(row_data) else ''
+                break
+        
+        # Limpiar celda auxiliar
+        sheet.update_acell('Z1', '')
+        
+        return template_value.strip() if template_value else ''
+    except Exception as e:
+        print(f"[WARN] Error refreshing template {tipo}: {e}", file=sys.stderr)
+        return ''
+
+
+def format_whatsapp_phone(numero):
+    """
+    Formatea telefono para WhatsApp. Solo acepta numeros con codigo de pais 56.
+    Formatos validos: 56911111111, +56911111111, 56 9 1111 1111, etc.
+    Retorna: +56XXXXXXXXX o None si invalido.
+    """
+    if not numero:
+        return None
+    num_clean = re.sub(r'[^0-9]', '', str(numero).strip())
+    if not num_clean:
+        return None
+    # Solo aceptar numeros con codigo de pais 56 (10-11 digitos)
+    if len(num_clean) >= 10 and num_clean.startswith('56'):
+        return f"+{num_clean}"
+    # Formato incompleto pero empieza con 56 — aceptar si tiene al menos 10 digitos
+    if num_clean.startswith('56') and len(num_clean) == 10:
+        return f"+{num_clean}"
+    return None
 # === CLASE AVANZADA PARA GENERAR PDF (DISEÑO INSTITUCIONAL ALTO CONTRASTE) ===
 class PDFReport(FPDF):
     def __init__(self, logo_alain_data, logo_noti_data):
@@ -2822,6 +2885,10 @@ elif menu_option == "Centro de Notificaciones":
                 mensajes_enviados_racha = 0 
 
                 print(f"[BTN] Starting loop over {len(df_proc)} rows", flush=True)
+                # === TEMPLATES DINÁMICOS (port v14): cargar + refrescar cada 20 envíos OK ===
+                TEMPLATE_REFRESH_INTERVAL = 20
+                template_refresh_counter = 0
+                update_terminal(f'<span class="log-info">[TEMPLATE] Templates cargados desde Google Sheets. Se refrescarán cada {TEMPLATE_REFRESH_INTERVAL} pacientes.</span>')
                 for idx, row in df_proc.iterrows():
                     # 1. LÓGICA DE DESCANSO LARGO (FRENO DE EMERGENCIA)
                     if mensajes_enviados_racha >= random.randint(5, 9):
@@ -2887,6 +2954,17 @@ elif menu_option == "Centro de Notificaciones":
                                 ok, log = enviar_mensaje_wsp(client, row['TELEFONO'], msg)
                                 if ok:
                                     mensajes_enviados_racha += 1
+                                    # === TEMPLATES DINÁMICOS (port v14): refrescar cada 20 envíos OK ===
+                                    template_refresh_counter += 1
+                                    if template_refresh_counter >= TEMPLATE_REFRESH_INTERVAL:
+                                        template_refresh_counter = 0
+                                        _v_agend = refresh_template_from_sheets('MSG_AGEND')
+                                        _v_reagend = refresh_template_from_sheets('MSG_REAGEND')
+                                        if _v_agend:
+                                            CUSTOM_TEMPLATES['MSG_AGEND'] = _v_agend
+                                        if _v_reagend:
+                                            CUSTOM_TEMPLATES['MSG_REAGEND'] = _v_reagend
+                                        update_terminal(f'<span class="log-info">[TEMPLATE] Templates refrescados desde Google Sheets.</span>')
                                     try:
                                         sheet_conn.update_cell(fila, 22, "NOTIFICADO OK") # ESTADO_REA
                                         sheet_conn.update_cell(fila, 23, ahora)            # FECHA_NOTIF_2
@@ -2920,6 +2998,17 @@ elif menu_option == "Centro de Notificaciones":
                                 
                                 if ok:
                                     mensajes_enviados_racha += 1
+                                    # === TEMPLATES DINÁMICOS (port v14): refrescar cada 20 envíos OK ===
+                                    template_refresh_counter += 1
+                                    if template_refresh_counter >= TEMPLATE_REFRESH_INTERVAL:
+                                        template_refresh_counter = 0
+                                        _v_agend = refresh_template_from_sheets('MSG_AGEND')
+                                        _v_reagend = refresh_template_from_sheets('MSG_REAGEND')
+                                        if _v_agend:
+                                            CUSTOM_TEMPLATES['MSG_AGEND'] = _v_agend
+                                        if _v_reagend:
+                                            CUSTOM_TEMPLATES['MSG_REAGEND'] = _v_reagend
+                                        update_terminal(f'<span class="log-info">[TEMPLATE] Templates refrescados desde Google Sheets.</span>')
                                     try:
                                         sheet_conn.update_cell(fila, 12, "NOTIFICADO OK") # ESTADO
                                         sheet_conn.update_cell(fila, 13, ahora)           # FECHA_NOTIF_1
