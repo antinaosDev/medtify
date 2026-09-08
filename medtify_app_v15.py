@@ -65,7 +65,7 @@ except Exception:
 # La URL se actualiza automáticamente via git por start_auto.sh
 # NO usar st.secrets para EVOLUTION_API_URL (se actualiza via código)
 # ============================================================
-EVO_API_URL_CODE = "https://survey-configuration-strongly-donna.trycloudflare.com"
+EVO_API_URL_CODE = "https://roller-indianapolis-usa-looked.trycloudflare.com"
 EVO_API_KEY_CODE = st.secrets.get("EVOLUTION_API_KEY", "evokey_medtify_2026_migracion_local")
 EVO_INSTANCE_CODE = st.secrets.get("EVOLUTION_INSTANCE", "medtify")
 
