@@ -61,20 +61,11 @@ except Exception:
     BOOTSTRAP_CREDS = {}
 
 # ============================================================
-# URL PÚBLICA de la Evolution API (celular/Termux con ngrok).
-# Prioridad: Streamlit Secrets > EVO_API_URL_CODE > session_state
-# Para actualizar la URL sin cambiar código:
-#   1. Ve a Streamlit Cloud → Settings → Secrets
-#   2. Agrega: EVOLUTION_API_URL = "https://TU_URL.ngrok-free.app"
-#   3. Guarda (se redeploya automáticamente)
+# URL PÚBLICA de la Evolution API (celular/Termux con cloudflare tunnel).
+# La URL se actualiza automáticamente via git por start_auto.sh
+# NO usar st.secrets para EVOLUTION_API_URL (se actualiza via código)
 # ============================================================
-# Intentar leer de Secrets primero, fallback al valor por defecto
-try:
-    _secrets_evo = st.secrets.get("EVOLUTION_API_URL", None)
-except Exception:
-    _secrets_evo = None
-
-EVO_API_URL_CODE = _secrets_evo or "https://survey-configuration-strongly-donna.trycloudflare.com"
+EVO_API_URL_CODE = "https://survey-configuration-strongly-donna.trycloudflare.com"
 EVO_API_KEY_CODE = st.secrets.get("EVOLUTION_API_KEY", "evokey_medtify_2026_migracion_local")
 EVO_INSTANCE_CODE = st.secrets.get("EVOLUTION_INSTANCE", "medtify")
 
