@@ -60,6 +60,18 @@ try:
 except Exception:
     BOOTSTRAP_CREDS = {}
 
+# ============================================================
+# URL PÚBLICA de la Evolution API (celular/Termux).
+# Con este backend la API corre en el Samsung S23 Ultra con
+# Evolution API v2.3.7 + cloudflared. Si el túnel cambia,
+# actualiza ESTA URL y haz push a GitHub (Streamlit Cloud
+# redeploya solo). Prioridad: EVO_API_URL_CODE < session_state
+# (la UI puede sobreescribirla temporalmente).
+# ============================================================
+EVO_API_URL_CODE = "https://paxil-holmes-bridal-marie.trycloudflare.com"
+EVO_API_KEY_CODE = "evokey_medtify_2026_migracion_local"
+EVO_INSTANCE_CODE = "medtify"
+
 # -----------------------------------------------------------------------------
 # 1. FUNCIONES DE UTILIDAD Y BACKEND
 # -----------------------------------------------------------------------------
@@ -769,9 +781,9 @@ def get_data_fresh(account_id, worksheet_name=None, worksheet_index=0):
 
 def init_evolution_client():
     """Initialize Evolution API client (replaces Chrome Selenium driver)."""
-    evo_url = st.session_state.get("evo_api_url", "http://localhost:8080")
-    evo_key = st.session_state.get("evo_api_key", "")
-    evo_instance = st.session_state.get("evo_instance", "medtify")
+    evo_url = st.session_state.get("evo_api_url", EVO_API_URL_CODE)
+    evo_key = st.session_state.get("evo_api_key", EVO_API_KEY_CODE)
+    evo_instance = st.session_state.get("evo_instance", EVO_INSTANCE_CODE)
     safe_mode = st.session_state.get("evo_safe_mode", True)
 
     if not evo_key:
@@ -1655,19 +1667,19 @@ with st.sidebar:
     else:
         # Load defaults from st.secrets (Streamlit Cloud) or fallback to manual input
         try:
-            secrets_evo_url = st.secrets.get("EVOLUTION_API_URL", "")
-            secrets_evo_key = st.secrets.get("EVOLUTION_API_KEY", "")
-            secrets_evo_instance = st.secrets.get("EVOLUTION_INSTANCE", "medtify")
+            secrets_evo_url = st.secrets.get("EVOLUTION_API_URL", "") or EVO_API_URL_CODE
+            secrets_evo_key = st.secrets.get("EVOLUTION_API_KEY", "") or EVO_API_KEY_CODE
+            secrets_evo_instance = st.secrets.get("EVOLUTION_INSTANCE", "") or EVO_INSTANCE_CODE
             secrets_safe = st.secrets.get("MEDTIFY_SAFE_MODE", "false").lower() == "true"
         except:
-            secrets_evo_url = ""
-            secrets_evo_key = ""
-            secrets_evo_instance = "medtify"
+            secrets_evo_url = EVO_API_URL_CODE
+            secrets_evo_key = EVO_API_KEY_CODE
+            secrets_evo_instance = EVO_INSTANCE_CODE
             secrets_safe = False
         
         evo_url = st.text_input(
             "Server URL",
-            value=st.session_state.get("evo_api_url", secrets_evo_url or "http://localhost:8080"),
+            value=st.session_state.get("evo_api_url", secrets_evo_url),
             key="evo_url_input",
             help="URL del servidor Evolution API"
         )
@@ -1704,9 +1716,9 @@ with st.sidebar:
     
     try:
         test_client = EvolutionClient(
-            base_url=st.session_state.get("evo_api_url", "http://localhost:2785" if backend_default == "OpenWA" else "http://localhost:8080"),
-            api_key=st.session_state.get("evo_api_key", ""),
-            instance=st.session_state.get("evo_instance", "medtify-session" if backend_default == "OpenWA" else "medtify"),
+            base_url=st.session_state.get("evo_api_url", EVO_API_URL_CODE),
+            api_key=st.session_state.get("evo_api_key", EVO_API_KEY_CODE),
+            instance=st.session_state.get("evo_instance", EVO_INSTANCE_CODE),
             safe_mode=st.session_state.get("evo_safe_mode", True)
         )
         if test_client._check_connection():
@@ -1719,12 +1731,14 @@ with st.sidebar:
                     st.info("Usa el pairing code o escanea QR en OpenWA Dashboard")
                 else:
                     st.info("Abre Evolution Manager para escanear QR")
+            st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
         else:
             st.error("❌ Backend no responde")
             if backend_default == "OpenWA":
                 st.info("Verifica que OpenWA esté corriendo en el puerto 2785")
             else:
                 st.info("Verifica que el VPS esté corriendo")
+            st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
     except:
         st.warning("⚠️ No se pudo verificar conexión")
 
