@@ -1646,7 +1646,7 @@ with st.sidebar:
         st.success(f"✅ Cuenta Activa: {MASTER_ACCOUNT_ID}")
 
         # === BOTÓN DE CERRAR SESIÓN ===
-        if st.button("🚪 Cerrar Sesión", key="logout_btn", width="stretch"):
+        if st.button("🚪 Cerrar Sesión", key="logout_btn_sidebar", width="stretch"):
             st.session_state.logged_in = False
             st.session_state.account_id = None
             st.session_state.rol_usuario = ''
