@@ -74,7 +74,7 @@ try:
 except Exception:
     _secrets_evo = None
 
-EVO_API_URL_CODE = _secrets_evo or "https://designed-grace-latest-due.trycloudflare.com"
+EVO_API_URL_CODE = _secrets_evo or "https://survey-configuration-strongly-donna.trycloudflare.com"
 EVO_API_KEY_CODE = st.secrets.get("EVOLUTION_API_KEY", "evokey_medtify_2026_migracion_local")
 EVO_INSTANCE_CODE = st.secrets.get("EVOLUTION_INSTANCE", "medtify")
 
