@@ -64,3 +64,28 @@ build_*.ps1
 EMPAQUETADO.md
 DEPLOY_VPS.md
 SETUP_PC_SERVIDOR.md
+
+# === SECRETS / CREDENCIALES LOCALES (no subir jamás) ===
+STREAMLIT_SECRETS.txt
+.streanlit/secrets.toml
+.streamlit/secrets.toml
+**/.streamlit/secrets*.toml
+token.json
+token*.json
+*service_account*.json
+sistemas-*.json
+cred.py
+.env*
+*.pem
+*.key
+
+# === DEPLOY / VPS / ARTEFACTOS ===
+deploy_vps.sh
+vps_setup.sh
+dist.zip
+dist/
+build/
+notify/
+selenium_profile/
+*.log
+nohup.out
