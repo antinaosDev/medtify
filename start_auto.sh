@@ -142,7 +142,7 @@ fi
 echo ""
 echo -e "${GREEN}[5/5] Actualizando GitHub...${NC}"
 
-REPO_DIR="$HOME/PROYECTOS PROGRAMACIÓN/salud/medtify_files"
+REPO_DIR="$HOME/medtify_repo"
 # Also try the local project directory
 if [ ! -d "$REPO_DIR" ]; then
     # Find the repo - check common locations
@@ -160,6 +160,9 @@ fi
 if [ -d "$REPO_DIR" ]; then
     cd "$REPO_DIR"
     
+    # Pull últimos cambios de GitHub
+    /data/data/com.termux/files/usr/bin/git pull origin main 2>/dev/null
+    
     # Actualizar la URL en el código usando sed
     OLD_URL=$(grep -o 'EVO_API_URL_CODE = "https://[^"]*"' medtify_app_v15.py | grep -o 'https://[^"]*')
     
@@ -171,12 +174,12 @@ if [ -d "$REPO_DIR" ]; then
         sed -i "s|EVO_API_URL_CODE = \"https://[^\"]*\"|EVO_API_URL_CODE = \"$NEW_URL\"|" medtify_app_v15.py
         
         # Git push
-        git add medtify_app_v15.py
-        git commit -m "Auto-update: Evolution API URL → $NEW_URL
+        /data/data/com.termux/files/usr/bin/git add medtify_app_v15.py
+        /data/data/com.termux/files/usr/bin/git commit -m "Auto-update: Evolution API URL → $NEW_URL
 
 🤖 Generated with Codebuff
 Co-Authored-By: Codebuff <noreply@codebuff.com>"
-        git push
+        /data/data/com.termux/files/usr/bin/git push
         
         echo "  ✅ Push a GitHub enviado"
         echo "  ⏳ Streamlit Cloud se redeployará en 1-2 minutos"
