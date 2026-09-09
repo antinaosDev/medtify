@@ -1,13 +1,5 @@
 #!/bin/sh
-# Wrapper for Prisma query engine using proot with musl libs
-# Uses ~/prisma-root/ which has musl libs and the engine binary
-
-PREFIX=/data/data/com.termux/files/usr
-ROOT=/data/data/com.termux/files/home/prisma-root
-PROOT=$PREFIX/bin/proot
-
-exec $PROOT \
-  -r "$ROOT" \
-  -b /dev:/dev \
-  -w /tmp \
-  /query-engine "$@"
+# Wrapper for Prisma query engine
+# The binary has been patched with patchelf to use musl libs directly
+ENGINE=/data/data/com.termux/files/home/evolution-api/node_modules/.prisma/client/query-engine-linux-musl-arm64-openssl-3.0.x
+exec "$ENGINE" "$@"
