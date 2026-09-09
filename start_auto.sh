@@ -1,13 +1,16 @@
 #!/bin/sh
 # ============================================================
-# MEDTIFY - Script de inicio automático
+# MEDTIFY - Script de inicio automático (a prueba de errores)
 # Inicia PostgreSQL + Evolution API + Cloudflared tunnel
 # y actualiza la URL en GitHub automáticamente
+#
+# REGLA CLAVE: NUNCA mata el cloudflared viejo hasta que
+# el nuevo URL esté confirmado funcionando desde internet.
 # ============================================================
 
 export HOME=/data/data/com.termux/files/home
 export PREFIX=/data/data/com.termux/files/usr
-export PATH=/data/data/com.termux/files/usr/bin:$PATH
+export PATH=$PREFIX/bin:$PATH
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -46,7 +49,7 @@ fi
 echo ""
 echo -e "${GREEN}[2/5] Evolution API...${NC}"
 
-# Matar procesos viejos
+# Matar procesos viejos de Evolution API (NO cloudflared)
 kill $(pgrep -f "tsx.*main.ts") 2>/dev/null
 kill $(pgrep -f "node.*evo") 2>/dev/null
 sleep 1
@@ -88,40 +91,115 @@ if [ "$STATUS" != "200" ]; then
 fi
 
 # ============================================
-# PASO 3: CLOUDFLARED TUNNEL
+# PASO 3: CLOUDFLARED TUNNEL (A PRUEBA DE ERRORES)
 # ============================================
 echo ""
 echo -e "${GREEN}[3/5] Cloudflared tunnel...${NC}"
 
-# Matar cloudflared viejo
-kill $(pgrep cloudflared) 2>/dev/null
-sleep 1
+# LEER URL ACTUAL (la que está funcionando ahora)
+OLD_URL=$(cat $HOME/cloudflared_url.txt 2>/dev/null)
 
-cd $HOME
-rm -f cloudflared_new.log
-nohup $PREFIX/bin/cloudflared tunnel --url http://localhost:8080 > cloudflared_new.log 2>&1 </dev/null &
-
-# Esperar URL
-echo "  Esperando URL..."
-NEW_URL=""
-for i in $(seq 1 20); do
-    sleep 2
-    NEW_URL=$(grep -o 'https://[a-z0-9-]*.trycloudflare.com' cloudflared_new.log 2>/dev/null | head -1)
-    if [ -n "$NEW_URL" ]; then
-        break
+# VERIFICAR SI LA URL ACTUAL SIGUE FUNCIONANDO
+if [ -n "$OLD_URL" ]; then
+    OLD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$OLD_URL/" 2>/dev/null)
+    if [ "$OLD_STATUS" = "200" ]; then
+        echo "  ✅ URL actual sigue funcionando: $OLD_URL"
+        echo "  No es necesario crear un nuevo túnel."
+        NEW_URL="$OLD_URL"
+    else
+        echo "  ⚠️  URL actual no responde ($OLD_STATUS). Creando nuevo túnel..."
+        NEW_URL=""
     fi
-done
-
-if [ -z "$NEW_URL" ]; then
-    echo -e "  ${RED}❌ No se obtuvo URL de Cloudflare${NC}"
-    tail -10 cloudflared_new.log
-    exit 1
+else
+    echo "  No hay URL guardada. Creando túnel..."
+    NEW_URL=""
 fi
 
-echo "  ✅ URL: $NEW_URL"
+# SOLO crear nuevo túnel si la URL actual no funciona
+if [ -z "$NEW_URL" ]; then
+    # NO matar el viejo aún - mantenerlo por si acaso
+    # Iniciar cloudflared nuevo en background
+    cd $HOME
+    rm -f cloudflared_new.log
+    nohup $PREFIX/bin/cloudflared tunnel --url http://localhost:8080 > cloudflared_new.log 2>&1 </dev/null &
+    NEW_CF_PID=$!
+
+    # Esperar URL del nuevo túnel
+    echo "  Esperando nueva URL..."
+    NEW_URL=""
+    for i in $(seq 1 30); do
+        sleep 2
+        NEW_URL=$(grep -o 'https://[a-z0-9-]*.trycloudflare.com' cloudflared_new.log 2>/dev/null | head -1)
+        if [ -n "$NEW_URL" ]; then
+            break
+        fi
+    done
+
+    if [ -z "$NEW_URL" ]; then
+        echo -e "  ${RED}❌ No se obtuvo URL de Cloudflare${NC}"
+        # Matar el nuevo que no funcionó
+        kill $NEW_CF_PID 2>/dev/null
+        # Si hay URL vieja, intentar usarla como fallback
+        if [ -n "$OLD_URL" ]; then
+            echo -e "  ${YELLOW}⚠️  Usando URL anterior como fallback: $OLD_URL${NC}"
+            NEW_URL="$OLD_URL"
+        else
+            tail -10 cloudflared_new.log
+            exit 1
+        fi
+    fi
+
+    # Verificar que la nueva URL funciona desde internet
+    echo "  Verificando nueva URL..."
+    URL_OK=0
+    for i in $(seq 1 15); do
+        sleep 3
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$NEW_URL/" 2>/dev/null)
+        if [ "$HTTP_CODE" = "200" ]; then
+            echo "  ✅ Nueva URL confirmada: $NEW_URL"
+            URL_OK=1
+            break
+        fi
+        echo "  Intento $i/15 - HTTP $HTTP_CODE..."
+    done
+
+    if [ "$URL_OK" = "0" ]; then
+        echo -e "  ${YELLOW}⚠️  Nueva URL no responde aún desde internet${NC}"
+        # Matar el cloudflared nuevo que no sirve
+        kill $NEW_CF_PID 2>/dev/null
+
+        # Si la URL vieja existía, restaurarla
+        if [ -n "$OLD_URL" ]; then
+            echo -e "  ${YELLOW}⚠️  Restaurando URL anterior: $OLD_URL${NC}"
+            NEW_URL="$OLD_URL"
+            # Verificar que la URL vieja sigue funcionando
+            OLD_CHECK=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$OLD_URL/" 2>/dev/null)
+            if [ "$OLD_CHECK" = "200" ]; then
+                echo "  ✅ URL anterior sigue activa"
+            else
+                echo -e "  ${RED}❌ URL anterior también caída. Espera unos minutos y vuelve a intentar.${NC}"
+            fi
+        else
+            echo -e "  ${RED}❌ No hay URL disponible. Intenta de nuevo en 1 minuto.${NC}"
+            exit 1
+        fi
+    else
+        # La nueva URL funciona - Matar el cloudflared viejo
+        if [ -n "$OLD_URL" ] && [ "$OLD_URL" != "$NEW_URL" ]; then
+            echo "  Cerrando túnel anterior..."
+            # Matar solo los cloudflared viejos (no el nuevo)
+            for pid in $(pgrep cloudflared); do
+                if [ "$pid" != "$NEW_CF_PID" ]; then
+                    kill $pid 2>/dev/null
+                fi
+            done
+        fi
+    fi
+fi
 
 # Guardar URL
-echo "$NEW_URL" > cloudflared_url.txt
+echo "$NEW_URL" > $HOME/cloudflared_url.txt
+echo "  ✅ URL: $NEW_URL"
 
 # ============================================
 # PASO 4: VERIFICAR CONEXIÓN
@@ -129,11 +207,11 @@ echo "$NEW_URL" > cloudflared_url.txt
 echo ""
 echo -e "${GREEN}[4/5] Verificando conexión...${NC}"
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$NEW_URL/" 2>/dev/null)
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$NEW_URL/" 2>/dev/null)
 if [ "$HTTP_CODE" = "200" ]; then
-    echo "  ✅ HTTP $OK - Backend funcionando"
+    echo "  ✅ HTTP 200 - Backend funcionando"
 else
-    echo -e "  ${YELLOW}⚠️  HTTP $HTTP_CODE (puede tardar unos segundos)${NC}"
+    echo -e "  ${YELLOW}⚠️  HTTP $HTTP_CODE (puede tardar unos segundos en propagarse)${NC}"
 fi
 
 # ============================================
@@ -143,9 +221,7 @@ echo ""
 echo -e "${GREEN}[5/5] Actualizando GitHub...${NC}"
 
 REPO_DIR="$HOME/medtify_repo"
-# Also try the local project directory
 if [ ! -d "$REPO_DIR" ]; then
-    # Find the repo - check common locations
     for candidate in \
         "$HOME/medtify_files" \
         "$HOME/proyectos/medtify_files" \
@@ -164,10 +240,10 @@ if [ -d "$REPO_DIR" ]; then
     /data/data/com.termux/files/usr/bin/git pull origin main 2>/dev/null
     
     # Actualizar la URL en el código usando sed
-    OLD_URL=$(grep -o 'EVO_API_URL_CODE = "https://[^"]*"' medtify_app_v15.py | grep -o 'https://[^"]*')
+    OLD_URL_CODE=$(grep -o 'EVO_API_URL_CODE = "https://[^"]*"' medtify_app_v15.py | grep -o 'https://[^"]*')
     
-    if [ "$OLD_URL" != "$NEW_URL" ]; then
-        echo "  URL anterior: $OLD_URL"
+    if [ "$OLD_URL_CODE" != "$NEW_URL" ]; then
+        echo "  URL anterior: $OLD_URL_CODE"
         echo "  URL nueva:    $NEW_URL"
         
         # Actualizar en el archivo
