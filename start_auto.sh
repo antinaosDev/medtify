@@ -54,11 +54,37 @@ kill $(pgrep -f "tsx.*main.ts") 2>/dev/null
 kill $(pgrep -f "node.*evo") 2>/dev/null
 sleep 1
 
+# Asegurar que Prisma client esté generado correctamente
+cd $HOME/evolution-api
+if [ ! -f "$HOME/evolution-api/node_modules/.prisma/client/query-engine-linux-musl-arm64-openssl-3.0.x" ] || \
+   [ ! -f "$HOME/evolution-api/node_modules/.prisma/client/query-engine-wrapper.sh" ]; then
+    echo "  Regenerando Prisma client..."
+    npx prisma generate --schema=prisma/postgresql-schema.prisma 2>&1 | tail -3
+fi
+
+# Asegurar que el binario esté patcheado con musl
+PATCH=$PREFIX/bin/patchelf
+ENGINE=$HOME/evolution-api/node_modules/.prisma/client/query-engine-linux-musl-arm64-openssl-3.0.x
+MUSL=$HOME/prisma-engines/musl
+
+if [ -f "$PATCH" ] && [ -f "$ENGINE" ] && [ -f "$MUSL/ld-musl-aarch64.so.1" ]; then
+    # Verificar si necesita patch (el interpreter debe ser musl, no glibc)
+    INTERP=$(readelf -l $ENGINE 2>/dev/null | grep "interpreter" | awk '{print $NF}' | tr -d '[]')
+    if [ "$INTERP" != "$MUSL/ld-musl-aarch64.so.1" ]; then
+        echo "  Patcheando binario Prisma con musl..."
+        cp $ENGINE ${ENGINE}.bak 2>/dev/null
+        $PATCH --set-interpreter $MUSL/ld-musl-aarch64.so.1 $ENGINE 2>/dev/null
+        $PATCH --set-rpath $MUSL $ENGINE 2>/dev/null
+        echo "  ✅ Binario parcheado"
+    fi
+fi
+
 # Verificar que el wrapper existe
 if [ ! -f "$HOME/evolution-api/node_modules/.prisma/client/query-engine-wrapper.sh" ]; then
     echo -e "  ${RED}❌ query-engine-wrapper.sh no encontrado${NC}"
     exit 1
 fi
+chmod +x $HOME/evolution-api/node_modules/.prisma/client/query-engine-wrapper.sh
 
 # Iniciar Evolution API
 cd $HOME/evolution-api
