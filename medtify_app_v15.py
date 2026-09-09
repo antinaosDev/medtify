@@ -779,12 +779,22 @@ def get_data_fresh(account_id, worksheet_name=None, worksheet_index=0):
     print(f"[DEBUG get_data_fresh] Returning df shape: {df.shape}, columns: {list(df.columns)}", file=sys.stderr)
     return df
 
+def get_user_instance_name(account_id: str) -> str:
+    """Generate a unique Evolution API instance name per user."""
+    # Sanitize account_id to be a valid instance name
+    safe_id = str(account_id).replace("@", "-").replace(".", "-").lower()
+    return f"medtify-{safe_id}"
+
 def init_evolution_client():
-    """Initialize Evolution API client (replaces Chrome Selenium driver)."""
+    """Initialize Evolution API client with per-user instance."""
     evo_url = st.session_state.get("evo_api_url", EVO_API_URL_CODE)
     evo_key = st.session_state.get("evo_api_key", EVO_API_KEY_CODE)
-    evo_instance = st.session_state.get("evo_instance", EVO_INSTANCE_CODE)
     safe_mode = st.session_state.get("evo_safe_mode", True)
+    
+    # Use per-user instance name
+    account_id = st.session_state.get("account_id", MASTER_ACCOUNT_ID)
+    user_instance = get_user_instance_name(account_id)
+    st.session_state["evo_instance"] = user_instance
 
     if not evo_key:
         return None
@@ -793,9 +803,11 @@ def init_evolution_client():
         client = EvolutionClient(
             base_url=evo_url,
             api_key=evo_key,
-            instance=evo_instance,
+            instance=user_instance,
             safe_mode=safe_mode
         )
+        # Auto-create instance if it doesn't exist
+        client.create_instance()
         return client
     except Exception as e:
         return None
@@ -1790,12 +1802,20 @@ with st.sidebar:
     st.markdown("### 📡 Estado de Conexión")
 
     try:
+        # Per-user instance
+        account_id = st.session_state.get("account_id", MASTER_ACCOUNT_ID)
+        user_instance = get_user_instance_name(account_id)
+        st.session_state["evo_instance"] = user_instance
+        
         test_client = EvolutionClient(
             base_url=st.session_state.get("evo_api_url", EVO_API_URL_CODE),
             api_key=st.session_state.get("evo_api_key", EVO_API_KEY_CODE),
-            instance=st.session_state.get("evo_instance", EVO_INSTANCE_CODE),
+            instance=user_instance,
             safe_mode=st.session_state.get("evo_safe_mode", True)
         )
+        # Auto-create instance if it doesn't exist
+        test_client.create_instance()
+        
         if test_client._check_connection():
             qr_status = test_client.check_qr_status()
             instance_details = test_client.get_instance_details()

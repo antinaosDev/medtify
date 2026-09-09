@@ -79,6 +79,34 @@ class EvolutionClient:
             logger.error(f"Cannot reach Evolution API: {e}")
             return False
 
+    def create_instance(self) -> bool:
+        """
+        Create a new instance in Evolution API if it doesn't exist.
+        Returns True if created or already exists.
+        """
+        # Check if instance already exists
+        if self._check_connection():
+            return True
+        try:
+            r = self._session.post(
+                f"{self.base_url}/instance/create",
+                json={
+                    "instanceName": self.instance,
+                    "integration": "WHATSAPP-BAILEYS",
+                    "qrcode": True
+                },
+                timeout=15
+            )
+            if r.status_code in (200, 201):
+                logger.info(f"Instance '{self.instance}' created successfully")
+                return True
+            else:
+                logger.error(f"Create instance failed: {r.status_code} - {r.text[:200]}")
+                return False
+        except Exception as e:
+            logger.error(f"Error creating instance: {e}")
+            return False
+
     def check_qr_status(self) -> Dict:
         """
         Check QR code / connection status.
