@@ -1828,43 +1828,46 @@ with st.sidebar:
                         st.metric("Chats", instance_details.get("chat_count", 0))
             else:
                 st.warning("⚠️ WhatsApp No Conectado")
-                st.info("Escanea el QR para conectar tu cuenta de WhatsApp")
-                
-                if st.button("📱 Mostrar QR para Conectar", key="show_qr_btn"):
-                    qr_code = test_client.get_qr_code()
-                    if qr_code:
-                        st.image(qr_code, caption="Escanea este QR con WhatsApp", width=300)
-                    else:
-                        st.error("No se pudo obtener el QR. Verifica que el backend esté corriendo.")
-            
-            # Botones de gestión - visibles para todos
-            st.markdown("---")
-            st.markdown("**🔧 Gestión de Sesión:**")
-            col_btn1, col_btn2 = st.columns(2)
-            
-            with col_btn1:
-                if st.button("🔄 Reconectar", key="reconnect_btn"):
-                    with st.spinner("Reconectando..."):
-                        qr_code = test_client.reconnect()
+                # Solo programador puede escanear QR y gestionar sesión
+                if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
+                    st.info("Escanea el QR para conectar tu cuenta de WhatsApp")
+                    if st.button("📱 Mostrar QR para Conectar", key="show_qr_btn"):
+                        qr_code = test_client.get_qr_code()
                         if qr_code:
-                            st.success("QR generado. Escanea con WhatsApp.")
-                            st.image(qr_code, caption="Nuevo QR para reconexión", width=300)
+                            st.image(qr_code, caption="Escanea este QR con WhatsApp", width=300)
                         else:
-                            st.warning("No se pudo generar QR. Intenta de nuevo.")
+                            st.error("No se pudo obtener el QR. Verifica que el backend esté corriendo.")
             
-            with col_btn2:
-                if st.button("🚪 Cerrar Sesión", key="logout_btn", type="secondary"):
-                    if st.session_state.get("confirm_logout"):
-                        with st.spinner("Cerrando sesión..."):
-                            if test_client.logout():
-                                st.success("Sesión cerrada. WhatsApp desconectado.")
-                                st.session_state["confirm_logout"] = False
-                                st.rerun()
+            # Botones de gestión - SOLO programador (afecta a TODOS los usuarios)
+            if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
+                st.markdown("---")
+                st.markdown("**🔧 Gestión de Sesión (Admin):**")
+                st.caption("⚠️ Estas acciones afectan a todos los usuarios")
+                col_btn1, col_btn2 = st.columns(2)
+                
+                with col_btn1:
+                    if st.button("🔄 Reconectar", key="reconnect_btn"):
+                        with st.spinner("Reconectando..."):
+                            qr_code = test_client.reconnect()
+                            if qr_code:
+                                st.success("QR generado. Escanea con WhatsApp.")
+                                st.image(qr_code, caption="Nuevo QR para reconexión", width=300)
                             else:
-                                st.error("No se pudo cerrar la sesión.")
-                    else:
-                        st.session_state["confirm_logout"] = True
-                        st.warning("⚠️ ¿Estás seguro? Se cerrará la sesión de WhatsApp y tendrás que escanear el QR de nuevo.")
+                                st.warning("No se pudo generar QR. Intenta de nuevo.")
+                
+                with col_btn2:
+                    if st.button("🚪 Cerrar Sesión", key="logout_btn", type="secondary"):
+                        if st.session_state.get("confirm_logout"):
+                            with st.spinner("Cerrando sesión..."):
+                                if test_client.logout():
+                                    st.success("Sesión cerrada. WhatsApp desconectado para todos.")
+                                    st.session_state["confirm_logout"] = False
+                                    st.rerun()
+                                else:
+                                    st.error("No se pudo cerrar la sesión.")
+                        else:
+                            st.session_state["confirm_logout"] = True
+                            st.warning("⚠️ Esto desconectará WhatsApp para TODOS los usuarios. ¿Estás seguro?")
             
             st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
         else:
