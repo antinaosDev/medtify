@@ -1889,12 +1889,14 @@ with st.sidebar:
                             st.session_state["confirm_logout"] = True
                             st.warning("⚠️ Esto desconectará WhatsApp para TODOS los usuarios. ¿Estás seguro?")
             
-            st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
+            if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
+                st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
         else:
             st.error("❌ Backend no responde")
-            st.info("🔧 **Solución:** En Termux, ejecuta `bash ~/start_auto.sh` para iniciar el túnel")
-            st.info("💡 La URL se actualiza automáticamente en GitHub")
-            st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
+            if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
+                st.info("🔧 **Solución:** En Termux, ejecuta `bash ~/start_auto.sh` para iniciar el túnel")
+                st.info("💡 La URL se actualiza automáticamente en GitHub")
+                st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
     except Exception as e:
         st.warning(f"⚠️ No se pudo verificar conexión: {e}")
 
