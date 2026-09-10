@@ -54,7 +54,6 @@ bash build_v15.sh
 EVOLUTION_API_URL = "http://TU_VPS_IP:8080"
 EVOLUTION_API_KEY = "tu-api-key"
 EVOLUTION_INSTANCE = "medtify"
-MEDTIFY_SAFE_MODE = "true"
 
 [gcp_service_account]
 # ... credenciales GCP
