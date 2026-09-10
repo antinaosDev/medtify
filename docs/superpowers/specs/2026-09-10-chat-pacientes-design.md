@@ -10,6 +10,8 @@ Agregar un centro de chat estilo WhatsApp dentro de la app Medtify, que permita 
 
 **Criterio rector:** que todo lo existente siga operativo — no se rompe nada del flujo actual (envío masivo de plantillas, verificación de respuestas, gestión de horas).
 
+**Regla dura del proyecto:** nada se sube a GitHub (commit/push) sin instrucción explícita del usuario. Todo se trabaja y prueba en local hasta que el usuario lo apruebe para subir.
+
 ## Contexto actual (verificado)
 
 - Backend: `EvolutionClient` en `evolution_client.py` (HTTP a Evolution API v2.3.7, auth header `apikey`).
