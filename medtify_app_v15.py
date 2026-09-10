@@ -789,7 +789,11 @@ def init_evolution_client():
     """Initialize Evolution API client with per-user instance."""
     evo_url = st.session_state.get("evo_api_url", EVO_API_URL_CODE)
     evo_key = st.session_state.get("evo_api_key", EVO_API_KEY_CODE)
-    safe_mode = st.session_state.get("evo_safe_mode", True)
+    # SAFE_MODE fix (2026-09-09): por defecto False. Solo se activa si el usuario
+    # lo marca explícitamente en el panel de PROGRAMADOR. El default True causaba
+    # que cuentas sin panel quedaran en modo seguro y marcaran NOTIFICADO OK sin
+    # enviar mensajes reales por WhatsApp.
+    safe_mode = st.session_state.get("evo_safe_mode", False)
     
     # Use per-user instance name
     account_id = st.session_state.get("account_id", MASTER_ACCOUNT_ID)
@@ -1711,12 +1715,10 @@ with st.sidebar:
                 secrets_evo_url = st.secrets.get("OPENWA_API_URL", "http://localhost:2785")
                 secrets_evo_key = st.secrets.get("OPENWA_API_KEY", "")
                 secrets_evo_instance = st.secrets.get("OPENWA_SESSION_ID", "medtify-session")
-                secrets_safe = st.secrets.get("MEDTIFY_SAFE_MODE", "false").lower() == "true"
             except:
                 secrets_evo_url = "http://localhost:2785"
                 secrets_evo_key = ""
                 secrets_evo_instance = "medtify-session"
-                secrets_safe = False
         
             evo_url = st.text_input(
                 "OpenWA Server URL",
@@ -1745,7 +1747,7 @@ with st.sidebar:
         
             evo_safe = st.checkbox(
                 "Safe Mode (no enviar mensajes)",
-                value=st.session_state.get("evo_safe_mode", secrets_safe),
+                value=st.session_state.get("evo_safe_mode", False),
                 key="openwa_safe_mode_input",
                 help="Si está activo, solo registra mensajes sin enviarlos"
             )
@@ -1755,12 +1757,10 @@ with st.sidebar:
                 secrets_evo_url = EVO_API_URL_CODE or st.secrets.get("EVOLUTION_API_URL", "")
                 secrets_evo_key = EVO_API_KEY_CODE or st.secrets.get("EVOLUTION_API_KEY", "")
                 secrets_evo_instance = EVO_INSTANCE_CODE or st.secrets.get("EVOLUTION_INSTANCE", "")
-                secrets_safe = st.secrets.get("MEDTIFY_SAFE_MODE", "false").lower() == "true"
             except:
                 secrets_evo_url = EVO_API_URL_CODE
                 secrets_evo_key = EVO_API_KEY_CODE
                 secrets_evo_instance = EVO_INSTANCE_CODE
-                secrets_safe = False
         
             evo_url = st.text_input(
                 "Server URL",
@@ -1789,7 +1789,7 @@ with st.sidebar:
         
             evo_safe = st.checkbox(
                 "Safe Mode (no enviar mensajes)",
-                value=st.session_state.get("evo_safe_mode", secrets_safe),
+                value=st.session_state.get("evo_safe_mode", False),
                 key="evo_safe_mode_input",
                 help="Si está activo, solo registra mensajes sin enviarlos"
             )
@@ -1811,7 +1811,7 @@ with st.sidebar:
             base_url=st.session_state.get("evo_api_url", EVO_API_URL_CODE),
             api_key=st.session_state.get("evo_api_key", EVO_API_KEY_CODE),
             instance=user_instance,
-            safe_mode=st.session_state.get("evo_safe_mode", True)
+            safe_mode=st.session_state.get("evo_safe_mode", False)
         )
         # Auto-create instance if it doesn't exist
         test_client.create_instance()
@@ -1848,46 +1848,43 @@ with st.sidebar:
                         st.metric("Chats", instance_details.get("chat_count", 0))
             else:
                 st.warning("⚠️ WhatsApp No Conectado")
-                # Solo programador puede escanear QR y gestionar sesión
-                if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
-                    st.info("Escanea el QR para conectar tu cuenta de WhatsApp")
-                    if st.button("📱 Mostrar QR para Conectar", key="show_qr_btn"):
-                        qr_code = test_client.get_qr_code()
-                        if qr_code:
-                            st.image(qr_code, caption="Escanea este QR con WhatsApp", width=300)
-                        else:
-                            st.error("No se pudo obtener el QR. Verifica que el backend esté corriendo.")
+                st.info("Escanea el QR para conectar tu cuenta de WhatsApp")
+                if st.button("📱 Mostrar QR para Conectar", key="show_qr_btn"):
+                    qr_code = test_client.get_qr_code()
+                    if qr_code:
+                        st.image(qr_code, caption="Escanea este QR con WhatsApp", width=300)
+                    else:
+                        st.error("No se pudo obtener el QR. Verifica que el backend esté corriendo.")
             
-            # Botones de gestión - SOLO programador (afecta a TODOS los usuarios)
-            if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
-                st.markdown("---")
-                st.markdown("**🔧 Gestión de Sesión (Admin):**")
-                st.caption("⚠️ Estas acciones afectan a todos los usuarios")
-                col_btn1, col_btn2 = st.columns(2)
-                
-                with col_btn1:
-                    if st.button("🔄 Reconectar", key="reconnect_btn"):
-                        with st.spinner("Reconectando..."):
-                            qr_code = test_client.reconnect()
-                            if qr_code:
-                                st.success("QR generado. Escanea con WhatsApp.")
-                                st.image(qr_code, caption="Nuevo QR para reconexión", width=300)
-                            else:
-                                st.warning("No se pudo generar QR. Intenta de nuevo.")
-                
-                with col_btn2:
-                    if st.button("🚪 Cerrar Sesión", key="logout_btn", type="secondary"):
-                        if st.session_state.get("confirm_logout"):
-                            with st.spinner("Cerrando sesión..."):
-                                if test_client.logout():
-                                    st.success("Sesión cerrada. WhatsApp desconectado para todos.")
-                                    st.session_state["confirm_logout"] = False
-                                    st.rerun()
-                                else:
-                                    st.error("No se pudo cerrar la sesión.")
+            # Botones de gestión - visibles para todos (cada usuario gestiona su instancia)
+            st.markdown("---")
+            st.markdown("**🔧 Gestión de Sesión WhatsApp:**")
+            st.caption("Estas acciones afectan a la conexión de WhatsApp de este usuario")
+            col_btn1, col_btn2 = st.columns(2)
+
+            with col_btn1:
+                if st.button("🔄 Reconectar", key="reconnect_btn"):
+                    with st.spinner("Reconectando..."):
+                        qr_code = test_client.reconnect()
+                        if qr_code:
+                            st.success("QR generado. Escanea con WhatsApp.")
+                            st.image(qr_code, caption="Nuevo QR para reconexión", width=300)
                         else:
-                            st.session_state["confirm_logout"] = True
-                            st.warning("⚠️ Esto desconectará WhatsApp para TODOS los usuarios. ¿Estás seguro?")
+                            st.warning("No se pudo generar QR. Intenta de nuevo.")
+
+            with col_btn2:
+                if st.button("🚪 Cerrar Sesión", key="logout_btn", type="secondary"):
+                    if st.session_state.get("confirm_logout"):
+                        with st.spinner("Cerrando sesión..."):
+                            if test_client.logout():
+                                st.success("Sesión cerrada. WhatsApp desconectado para este usuario.")
+                                st.session_state["confirm_logout"] = False
+                                st.rerun()
+                            else:
+                                st.error("No se pudo cerrar la sesión.")
+                    else:
+                        st.session_state["confirm_logout"] = True
+                        st.warning("⚠️ Esto desconectará WhatsApp de este usuario. ¿Estás seguro?")
             
             if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
                 st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")

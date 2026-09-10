@@ -296,7 +296,10 @@ class EvolutionClient:
         if self.safe_mode:
             logger.info(f"[SAFE_MODE] Would send to {plain_number}: {mensaje[:80]}...")
             print(f"[SAFE_MODE] Would send to {plain_number}: {mensaje[:80]}...", flush=True)
-            return True, f"[SAFE_MODE] Mensaje registrado (no enviado): {plain_number}"
+            # SAFE_MODE fix (2026-09-09): NUNCA reportar éxito en safe mode.
+            # Antes devolvía True, lo que hacía que la app marcara 'NOTIFICADO OK'
+            # sin haber enviado nada por WhatsApp.
+            return False, f"[SAFE_MODE] Mensaje NO enviado (modo seguro activo): {plain_number}"
 
         try:
             payload = {
