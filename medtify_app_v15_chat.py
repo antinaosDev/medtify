@@ -4010,7 +4010,7 @@ elif menu_option == "Chat con Pacientes":
 
         # --- Obtener lista de chats de Evolution API (cacheado 30s) ---
         try:
-            chats_raw = _cached_list_chats(evo_url_chat, evo_key_chat, evo_inst_chat, limite=50)
+            chats_raw = _cached_list_chats(evo_url_chat, evo_key_chat, evo_inst_chat, limite=200)
         except Exception as e:
             chats_raw = []
             st.warning(f"Error al obtener chats: {e}")
@@ -4066,6 +4066,23 @@ elif menu_option == "Chat con Pacientes":
                 or search_lower in c["rut"].lower()
                 or search_lower in c["telefono"]
             ]
+
+        # --- Diagnóstico Chat (solo PROGRAMADOR) ---
+        if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
+            with st.expander("🔍 Diagnóstico Chat (solo PROGRAMADOR)"):
+                st.caption(
+                    f"Chats obtenidos: {len(chats_raw)} | Pacientes indexados: {len(pacientes_index)} | "
+                    f"Coincidencias en bandeja: {len(chats_pacientes)}"
+                )
+                if chats_raw:
+                    st.caption("JIDs de chat (primeros 5): " + ", ".join(c.get("remoteJid", "") for c in chats_raw[:5]))
+                else:
+                    st.caption("chats_raw vacío: la API no devolvió chats.")
+                idx_jids = list(pacientes_index.keys())[:5]
+                if idx_jids:
+                    st.caption("JIDs en base (primeros 5): " + ", ".join(idx_jids))
+                else:
+                    st.caption("Índice de pacientes vacío: revisa que df_base_chat tenga TELEFONO válidos.")
 
         # --- Layout: Bandeja izquierda + Conversacion derecha ---
         _avatar_grads = [
