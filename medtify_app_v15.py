@@ -4415,7 +4415,11 @@ elif menu_option == "Chat con Pacientes":
                     _etq_e = html.escape(etiqueta) if etiqueta else ""
                     _last_e = html.escape(last_msg)
                     _hora_e = html.escape(hora)
-                    _badge_html = f'<span class="ch-badge">{unread}</span>' if unread > 0 else '<span class="ch-badge ch-badge-zero"></span>'
+                    try:
+                        _unread_n = int(chat_info.get("unread", 0) or 0)
+                    except Exception:
+                        _unread_n = 0
+                    _badge_html = f'<span class="ch-badge">{_unread_n}</span>' if _unread_n > 0 else '<span class="ch-badge ch-badge-zero"></span>'
 
                     st.markdown(
                         f'''<div class="ch-item">
