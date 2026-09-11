@@ -68,7 +68,7 @@ except Exception:
 # La URL se actualiza automáticamente via git por start_auto.sh
 # NO usar st.secrets para EVOLUTION_API_URL (se actualiza via código)
 # ============================================================
-EVO_API_URL_CODE = "https://valve-tank-archive-socket.trycloudflare.com"
+EVO_API_URL_CODE = "https://avoid-purchase-former-welfare.trycloudflare.com"
 EVO_API_KEY_CODE = st.secrets.get("EVOLUTION_API_KEY", "evokey_medtify_2026_migracion_local")
 EVO_INSTANCE_CODE = st.secrets.get("EVOLUTION_INSTANCE", "medtify")
 
@@ -1965,41 +1965,38 @@ with st.sidebar:
         "{CONFIRMA_HORA}", "{CONFIRMA_REAGEN}", "{NOM_PROF_REASIG}",
         "{MOTIVO_CONSULTA_REA}"
     ]
+    _rec_vars = ["{NOMBRE_PACIENTE}", "{FECHA_AGENDADA}", "{HORA_AGENDADA}",
+                 "{NOMBRE_PROFESIONAL}", "{MOTIVO_CONSULTA}", "{TELEFONO}",
+                 "{CENTRO_SALUD}", "{SECTOR}", "{RUT}", "{EDAD_ACTUAL}",
+                 "{GENERO}", "{OBSERVACION}", "{TOTAL_REV}"]
+    _rea_vars = ["{NOMBRE_PACIENTE}", "{NUEVA_FECHA}", "{HORA_NUEVA_FECHA}",
+                 "{NOM_PROF_REASIG}", "{MOTIVO_CONSULTA_REA}",
+                 "{CONFIRMA_HORA}", "{CONFIRMA_REAGEN}"]
+
+    def _insertar_var_tpl(variable):
+        k = "tpl_agend_edit" if st.session_state.get("tpl_destino", "Recordatorio") == "Recordatorio" else "tpl_reagend_edit"
+        _cur = st.session_state.get(k, "")
+        st.session_state[k] = (_cur + " " + variable).strip()
 
     with st.expander("Plantillas de Mensajes (recordar horario y reagendar)", expanded=False):
         st.markdown('<div class="tpl-section">', unsafe_allow_html=True)
 
-        # --- Chips de variables (solo lectura visual) ---
-        st.markdown('<span class="tpl-label">Variables Recordatorio:</span>', unsafe_allow_html=True)
-        _rec_vars = ["{NOMBRE_PACIENTE}", "{FECHA_AGENDADA}", "{HORA_AGENDADA}",
-                     "{NOMBRE_PROFESIONAL}", "{MOTIVO_CONSULTA}", "{TELEFONO}",
-                     "{CENTRO_SALUD}", "{SECTOR}", "{RUT}", "{EDAD_ACTUAL}",
-                     "{GENERO}", "{OBSERVACION}", "{TOTAL_REV}"]
-        st.markdown('<div class="tpl-chips">' +
-                    ''.join(f'<span class="tpl-chip">{v}</span>' for v in _rec_vars) +
-                    '</div>', unsafe_allow_html=True)
+        # --- Paso 1: elegir en qué plantilla insertar ---
+        st.markdown('<span class="tpl-label">1) ¿En qué plantilla quieres insertar?</span>', unsafe_allow_html=True)
+        _destino = st.radio("Insertar en:", ["Recordatorio", "Reagendamiento"],
+                            horizontal=True, key="tpl_destino", label_visibility="collapsed")
 
-        st.markdown('<span class="tpl-label">Variables Reagendamiento:</span>', unsafe_allow_html=True)
-        _rea_vars = ["{NOMBRE_PACIENTE}", "{NUEVA_FECHA}", "{HORA_NUEVA_FECHA}",
-                     "{NOM_PROF_REASIG}", "{MOTIVO_CONSULTA_REA}",
-                     "{CONFIRMA_HORA}", "{CONFIRMA_REAGEN}"]
-        st.markdown('<div class="tpl-chips">' +
-                    ''.join(f'<span class="tpl-chip">{v}</span>' for v in _rea_vars) +
-                    '</div>', unsafe_allow_html=True)
-
-        # --- Insertar variable (selectbox + boton) ---
-        _var_sel = st.selectbox("Insertar variable:", _vars_all, key="tpl_var_selector",
-                                help="Selecciona y haz clic en Insertar para agregar la variable al texto.")
-        _ci1, _ci2 = st.columns(2)
-        if _ci1.button("Insertar en Recordatorio", key="btn_ins_agend", use_container_width=True):
-            _cur = st.session_state.get("tpl_agend_edit", "")
-            st.session_state["tpl_agend_edit"] = (_cur + " " + _var_sel).strip()
-            st.rerun()
-        if _ci2.button("Insertar en Reagendamiento", key="btn_ins_reagend", use_container_width=True):
-            _cur = st.session_state.get("tpl_reagend_edit", "")
-            st.session_state["tpl_reagend_edit"] = (_cur + " " + _var_sel).strip()
-            st.rerun()
-
+        # --- Paso 2: chips clicables ---
+        st.markdown('<span class="tpl-label">2) Haz clic en la variable deseada (se inserta automáticamente):</span>', unsafe_allow_html=True)
+        _lista_activa = _rec_vars if _destino == "Recordatorio" else _rea_vars
+        st.markdown('<div class="tpl-chips">', unsafe_allow_html=True)
+        _chip_cols = st.columns(4)
+        for _i, _var in enumerate(_lista_activa):
+            with _chip_cols[_i % 4]:
+                if st.button(_var, key=f"chip_{_i}_{_var.strip('{}')}", use_container_width=True):
+                    _insertar_var_tpl(_var)
+                    st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('<hr class="tpl-sep">', unsafe_allow_html=True)
 
         # --- Editor Recordatorio + preview ---
