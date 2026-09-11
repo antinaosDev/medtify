@@ -51,6 +51,32 @@
 - Sintaxis validada con `ast.parse` tras cada edición
 - Footer de créditos ("Aplicación desarrollada por...") preservado al final del archivo
 
+## Confidencialidad multi-cuenta (2026-09-10, commit 54e8db6)
+
+**Requisito:** una cuenta Medtify solo debe ver los mensajes del WhatsApp que escaneó el QR de su instancia.
+Ninguna otra cuenta puede leer sus mensajes, incluso si rota la sesión de WhatsApp.
+
+**Modelo aplicado:**
+- Cada cuenta tiene UNA instancia determinista `medtify-<account_id>` (función `get_user_instance_name`).
+- La vista Chat con Pacientes y el panel Estado de Conexión usan SIEMPRE esa instancia derivada de la
+  cuenta logueada — nunca un valor libre.
+- El `Instance Name` / `Session ID` del panel ya **no son editables**: se muestran en modo solo lectura
+  con candado 🔒. Se eliminó un texto que guardaba el valor en `session_state["evo_instance"]` sin verificar
+  pertenencia (vector de fuga).
+- Guard en Chat con Pacientes: si la sesión no tiene `account_id` válido, bloquea con `st.stop()`.
+- Rótulo en la bandeja: “🔒 Solo conversaciones de la instancia <x> (cuenta actual)”.
+
+**Refuerzo con token aleatorio (commit 83011bb):**
+- Nueva columna en Admin Master: `WA_INSTANCE_NAME` (una por cuenta).
+- `get_user_instance_name` lee ese valor; si está vacío genera
+  `medtify-<cuenta>-<token8>` (secrets.token_hex) y **lo persiste en la hoja**.
+- El nombre de instancia ya no es derivable desde el sheet ni adivinable con URL/key
+  del panel: otra cuenta no puede apuntar a la instancia de otra.
+- Caché de lectura 10 min; fallback legacy solo si la columna no existe/sin acceso.
+- IMPORTANTE: el service account del sheet Admin Master debe ser **EDITOR** para poder
+  escribir el token. La primera vez, el nombre de instancia cambia → re-escanear QR una vez.
+- La rotación de teléfono ocurre DENTRO de la misma instancia (WA_INSTANCE_NAME no cambia).
+
 ## Pendiente / nota
 - El archivo local `medtify_app_v15_chat.py` es la fuente de trabajo; `medtify_app_v15.py` es el desplegado y ambos
   deben mantenerse sincronizados (copiar el primero sobre el segundo al desplegar).
