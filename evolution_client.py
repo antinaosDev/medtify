@@ -12,8 +12,11 @@ Usage:
 import time
 import random
 import logging
+import base64
 import requests
 from typing import Optional, Tuple, Dict, List
+
+from chat_helpers import make_jid
 
 logger = logging.getLogger("evolution_client")
 
@@ -46,7 +49,9 @@ class EvolutionClient:
         })
 
     def _url(self, path: str) -> str:
-        return f"{self.base_url}/{path}"
+        # Evita doble slash: base_url se normaliza sin trailing slash, path puede
+        # venir con o sin slash inicial (ej: "/chat/findChats/x" o "chat/findChats/x").
+        return f"{self.base_url}/{path.lstrip('/')}"
 
     def _check_connection(self) -> bool:
         """Check if Evolution API server is reachable and instance exists."""
@@ -276,13 +281,14 @@ class EvolutionClient:
 
         return f"{num}@c.us"
 
-    def send_message(self, numero: str, mensaje: str) -> Tuple[bool, str]:
+    def send_message(self, numero: str, mensaje: str, delay_ms: int = None) -> Tuple[bool, str]:
         """
         Send a text message via Evolution API.
 
         Args:
             numero: Phone number (raw, will be formatted)
             mensaje: Message text
+            delay_ms: Optional typing delay in ms. None = random 1200-3000ms (simulate typing).
 
         Returns:
             (success, log_message)
@@ -305,7 +311,7 @@ class EvolutionClient:
             payload = {
                 "number": plain_number,
                 "text": mensaje,
-                "delay": random.randint(1200, 3000),  # Simulate typing delay (ms)
+                "delay": delay_ms if delay_ms is not None else random.randint(1200, 3000),  # Simulate typing delay (ms)
             }
 
             url = f"{self.base_url}/message/sendText/{self.instance}"
@@ -412,6 +418,153 @@ class EvolutionClient:
 
         except Exception as e:
             logger.error(f"Error fetching messages for {jid_sw}: {e}")
+            return None
+
+    # ===================================================================
+    # CHAT METHODS (2026-09-10) — Bandeja de chats para Medtify V15
+    # ===================================================================
+
+    def list_chats(self, limite=50):
+        """
+        List recent chats from the WhatsApp instance.
+        Returns: list of dicts with remoteJid, name, unreadCount, lastMessage, etc.
+        """
+        try:
+            r = self._session.post(
+                self._url(f"/chat/findChats/{self.instance}"),
+                json={"limit": limite},
+                timeout=self.timeout
+            )
+            print(f"[CHAT] POST findChats http={r.status_code}", flush=True)
+            if r.status_code != 200:
+                print(f"[CHAT] findChats error http={r.status_code}", flush=True)
+                return []
+            data = r.json()
+            # Evolution API 2.x returns a plain LIST; older versions return {"chats": [...]}
+            if isinstance(data, list):
+                chats = data
+            elif isinstance(data, dict):
+                chats = data.get("chats", []) or []
+            else:
+                chats = []
+            print(f"[CHAT] found {len(chats)} chats", flush=True)
+            return chats
+        except Exception as e:
+            logger.error(f"Error listing chats: {e}")
+            print(f"[CHAT] EXCEPTION listing chats: {e}", flush=True)
+            return []
+
+    def get_messages(self, numero, limite=100):
+        """
+        Get message history for a specific phone number.
+        Returns: list of dicts with fromMe, body, timestamp, hasImage, imageUrl.
+        """
+        try:
+            # Normalize to JID using the SAME helper as the bandeja index
+            # (build_pacientes_chat_index) to guarantee JID consistency.
+            jid_sw = make_jid(numero)
+
+            def _find(where: dict) -> list:
+                try:
+                    r = self._session.post(
+                        self._url(f"/chat/findMessages/{self.instance}"),
+                        json={
+                            "where": where,
+                            "limit": limite,
+                            "offset": 0,
+                            "order": "DESC"
+                        },
+                        timeout=self.timeout
+                    )
+                    print(f"[CHAT] POST findMessages http={r.status_code}", flush=True)
+                    if r.status_code != 200:
+                        print(f"[CHAT] findMessages error http={r.status_code}", flush=True)
+                        return []
+                    data = r.json()
+                    # Evolution API 2.x may return a plain LIST or {"messages": {"records": [...]}}
+                    if isinstance(data, list):
+                        return data
+                    recs = (data or {}).get("messages", {}).get("records", [])
+                    print(f"[CHAT] found {len(recs)} messages", flush=True)
+                    return recs
+                except Exception as e:
+                    logger.error(f"Error in findMessages: {e}")
+                    print(f"[CHAT] EXCEPTION findMessages: {e}", flush=True)
+                    return []
+
+            # Try remoteJidAlt first, then remoteJid (mirrors get_last_incoming_message)
+            records = _find({"key": {"remoteJidAlt": jid_sw}})
+            if not records:
+                records = _find({"key": {"remoteJid": jid_sw}})
+
+            # Defensive: latest-first by messageTimestamp before slicing "latest N"
+            records.sort(key=lambda m: m.get("messageTimestamp", 0) or 0, reverse=True)
+            records = records[:limite]
+
+            result = []
+            for msg in records:
+                key = msg.get("key", {}) or {}
+                message_data = msg.get("message", {}) or {}
+                from_me = key.get("fromMe", False)
+
+                body = ""
+                has_image = False
+                image_url = None
+
+                if isinstance(message_data, dict):
+                    # Text message
+                    body = message_data.get("conversation", "") or ""
+                    if not body:
+                        etm = message_data.get("extendedTextMessage") or {}
+                        body = etm.get("text", "") or ""
+                    # Image message
+                    if not body:
+                        img = message_data.get("imageMessage") or {}
+                        body = img.get("caption", "") or ""
+                        if img.get("mimetype", "").startswith("image/") or img.get("url"):
+                            has_image = True
+                            image_url = img.get("url", None)
+
+                result.append({
+                    "fromMe": from_me,
+                    "body": body,
+                    "timestamp": msg.get("messageTimestamp", 0),
+                    "hasImage": has_image,
+                    "imageUrl": image_url
+                })
+
+            # Reverse to chronological order (DESC -> ASC)
+            result.reverse()
+            return result
+
+        except Exception as e:
+            logger.error(f"Error fetching messages: {e}")
+            print(f"[CHAT] EXCEPTION fetching messages: {e}", flush=True)
+            return []
+
+    def get_media_b64(self, media_url):
+        """
+        Download media and return as base64 data URI.
+        Returns: 'data:image/...;base64,...' or None on error.
+        """
+        try:
+            r = self._session.get(media_url, timeout=self.timeout)
+            if r.status_code != 200:
+                print(f"[CHAT] media download failed: {r.status_code}", flush=True)
+                return None
+            data = r.json()
+            b64 = data.get("base64", None)
+            if not b64:
+                print(f"[CHAT] no base64 in media response", flush=True)
+                return None
+            # Ensure proper data URI format
+            if not b64.startswith("data:"):
+                mime = data.get("mimetype", "image/jpeg")
+                b64 = f"data:{mime};base64,{b64}"
+            return b64
+        except Exception as e:
+            logger.error(f"Error downloading media: {e}")
+            print(f"[CHAT] EXCEPTION media: {e}", flush=True)
             return None
 
     def verificar_respuesta(self, numero: str, keywords_si: List[str] = None,

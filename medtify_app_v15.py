@@ -13,6 +13,7 @@ import json # NECESARIO: Para leer las credenciales y el contador JSON
 import tempfile # NECESARIO PARA EL PDF
 from fpdf import FPDF # NECESARIO PARA EL PDF
 import ast # NECESARIO PARA LEER LISTAS DESDE EXCEL
+import html
 import logging
 import sys
 
@@ -29,6 +30,8 @@ if _os.environ.get("WHATSAPP_BACKEND", "evolution").lower() == "openwa":
 else:
     from evolution_client import EvolutionClient
     logger.info("[CONFIG] Using Evolution API backend")
+
+from chat_helpers import normalizar_telefono_chat, make_jid, build_pacientes_chat_index, formatear_hora_mensaje
 import gspread
 from google.oauth2.service_account import Credentials
 from google.auth.transport.requests import Request
@@ -566,6 +569,83 @@ def safe_str_contains(series, search, na=False):
     if series is None or not hasattr(series, 'str'):
         return pd.Series(False, index=series.index if series is not None else [])
     return series.str.contains(search, na=na)
+
+def _evo_chat_client(evo_url, evo_key, evo_inst, evo_safe=False):
+    """Cliente Evolution reutilizable (1 por proceso/rerun)."""
+    try:
+        return EvolutionClient(base_url=evo_url, api_key=evo_key, instance=evo_inst, safe_mode=evo_safe)
+    except Exception:
+        return None
+
+
+def _evo_action_client(evo_url, evo_key, evo_inst, evo_safe=False):
+    """Cliente para acciones puntuales (QR, reconectar, logout)."""
+    try:
+        return EvolutionClient(base_url=evo_url, api_key=evo_key, instance=evo_inst, safe_mode=evo_safe)
+    except Exception:
+        return None
+
+
+@st.cache_resource(show_spinner=False)
+def _evo_chat_cached(evo_url, evo_key, evo_inst, evo_safe=False):
+    return _evo_chat_client(evo_url, evo_key, evo_inst, evo_safe)
+
+
+@st.cache_data(ttl=90, show_spinner=False)
+def _cached_get_data_fresh(account_id):
+    """Evita leer Google Sheets completo 2x por rerun."""
+    try:
+        return get_data_fresh(account_id)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_connection_snapshot(evo_url, evo_key, evo_inst, evo_safe=False):
+    """Estado de conexion WhatsApp cacheado 30s (evita 4 HTTP por rerun)."""
+    try:
+        cli = _evo_action_client(evo_url, evo_key, evo_inst, evo_safe)
+        if cli is None:
+            return {"ok": False}
+        cli.create_instance()
+        if not cli._check_connection():
+            return {"ok": False}
+        qr = cli.check_qr_status() or {}
+        det = cli.get_instance_details() or {}
+        return {
+            "ok": True,
+            "connected": bool(qr.get("connected")),
+            "phone": det.get("phone", ""),
+            "profile_name": det.get("profile_name", ""),
+            "message_count": det.get("message_count", 0),
+            "contact_count": det.get("contact_count", 0),
+            "chat_count": det.get("chat_count", 0),
+        }
+    except Exception:
+        return {"ok": False}
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_list_chats(evo_url, evo_key, evo_inst, limite=50):
+    try:
+        cli = _evo_chat_client(evo_url, evo_key, evo_inst, False)
+        if cli is None:
+            return []
+        return cli.list_chats(limite=limite)
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _cached_get_messages(evo_url, evo_key, evo_inst, numero, limite=20):
+    try:
+        cli = _evo_chat_client(evo_url, evo_key, evo_inst, False)
+        if cli is None:
+            return []
+        return cli.get_messages(numero, limite=limite)
+    except Exception:
+        return []
+
 
 def get_data_fresh(account_id, worksheet_name=None, worksheet_index=0):
     """Obtiene datos frescos de Google Sheets + Cruce Demográfico y Percapita.
@@ -1650,7 +1730,7 @@ with st.sidebar:
     st.markdown("### Navegación")
     menu_option = st.radio(
         "Menú",
-        ["Dashboard Analytics", "Gestión de Horas", "Nuevo Ingreso", "Centro de Notificaciones", "Base de Pacientes"],
+        ["Dashboard Analytics", "Gestión de Horas", "Nuevo Ingreso", "Centro de Notificaciones", "Base de Pacientes", "Chat con Pacientes"],
         index=0,
         label_visibility="collapsed"
     )
@@ -1802,98 +1882,90 @@ with st.sidebar:
     st.markdown("### 📡 Estado de Conexión")
 
     try:
-        # Per-user instance
+        # Per-user instance (snapshot cacheado 30s para no pegar 4 veces al API por rerun)
         account_id = st.session_state.get("account_id", MASTER_ACCOUNT_ID)
         user_instance = get_user_instance_name(account_id)
         st.session_state["evo_instance"] = user_instance
-        
-        test_client = EvolutionClient(
-            base_url=st.session_state.get("evo_api_url", EVO_API_URL_CODE),
-            api_key=st.session_state.get("evo_api_key", EVO_API_KEY_CODE),
-            instance=user_instance,
-            safe_mode=st.session_state.get("evo_safe_mode", False)
-        )
-        # Auto-create instance if it doesn't exist
-        test_client.create_instance()
-        
-        if test_client._check_connection():
-            qr_status = test_client.check_qr_status()
-            instance_details = test_client.get_instance_details()
-            
-            if qr_status.get("connected"):
-                st.success("✅ WhatsApp Conectado")
-                
-                if instance_details:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown("**📱 Número:**")
-                        phone = instance_details.get("phone", "")
-                        if phone:
-                            formatted_phone = f"+{phone[:2]} {phone[2:3]} {phone[3:7]} {phone[7:]}"
-                            st.info(f"{formatted_phone}")
-                        else:
-                            st.info("No disponible")
-                    with col2:
-                        st.markdown("**👤 Nombre:**")
-                        profile_name = instance_details.get("profile_name", "")
-                        st.info(f"{profile_name}" if profile_name else "No disponible")
-                    
-                    st.markdown("**📊 Estadísticas:**")
-                    stats_col1, stats_col2, stats_col3 = st.columns(3)
-                    with stats_col1:
-                        st.metric("Mensajes", instance_details.get("message_count", 0))
-                    with stats_col2:
-                        st.metric("Contactos", instance_details.get("contact_count", 0))
-                    with stats_col3:
-                        st.metric("Chats", instance_details.get("chat_count", 0))
-            else:
-                st.warning("⚠️ WhatsApp No Conectado")
-                st.info("Escanea el QR para conectar tu cuenta de WhatsApp")
-                if st.button("📱 Mostrar QR para Conectar", key="show_qr_btn"):
-                    qr_code = test_client.get_qr_code()
-                    if qr_code:
-                        st.image(qr_code, caption="Escanea este QR con WhatsApp", width=300)
-                    else:
-                        st.error("No se pudo obtener el QR. Verifica que el backend esté corriendo.")
-            
-            # Botones de gestión - visibles para todos (cada usuario gestiona su instancia)
-            st.markdown("---")
-            st.markdown("**🔧 Gestión de Sesión WhatsApp:**")
-            st.caption("Estas acciones afectan a la conexión de WhatsApp de este usuario")
-            col_btn1, col_btn2 = st.columns(2)
 
-            with col_btn1:
-                if st.button("🔄 Reconectar", key="reconnect_btn"):
-                    with st.spinner("Reconectando..."):
-                        qr_code = test_client.reconnect()
-                        if qr_code:
-                            st.success("QR generado. Escanea con WhatsApp.")
-                            st.image(qr_code, caption="Nuevo QR para reconexión", width=300)
-                        else:
-                            st.warning("No se pudo generar QR. Intenta de nuevo.")
+        evo_url = st.session_state.get("evo_api_url", EVO_API_URL_CODE)
+        evo_key = st.session_state.get("evo_api_key", EVO_API_KEY_CODE)
+        evo_safe = st.session_state.get("evo_safe_mode", False)
 
-            with col_btn2:
-                if st.button("🚪 Cerrar Sesión", key="logout_btn", type="secondary"):
-                    if st.session_state.get("confirm_logout"):
-                        with st.spinner("Cerrando sesión..."):
-                            if test_client.logout():
-                                st.success("Sesión cerrada. WhatsApp desconectado para este usuario.")
-                                st.session_state["confirm_logout"] = False
-                                st.rerun()
-                            else:
-                                st.error("No se pudo cerrar la sesión.")
-                    else:
-                        st.session_state["confirm_logout"] = True
-                        st.warning("⚠️ Esto desconectará WhatsApp de este usuario. ¿Estás seguro?")
-            
-            if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
-                st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
+        snap = _cached_connection_snapshot(evo_url, evo_key, user_instance, evo_safe)
+
+        if snap and snap.get("ok") and snap.get("connected"):
+            st.success("✅ WhatsApp Conectado")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**📱 Número:**")
+                phone = snap.get("phone", "")
+                if phone:
+                    formatted_phone = f"+{phone[:2]} {phone[2:3]} {phone[3:7]} {phone[7:]}"
+                    st.info(f"{formatted_phone}")
+                else:
+                    st.info("No disponible")
+            with col2:
+                st.markdown("**👤 Nombre:**")
+                profile_name = snap.get("profile_name", "")
+                st.info(f"{profile_name}" if profile_name else "No disponible")
+
+            st.markdown("**📊 Estadísticas:**")
+            stats_col1, stats_col2, stats_col3 = st.columns(3)
+            with stats_col1:
+                st.metric("Mensajes", snap.get("message_count", 0))
+            with stats_col2:
+                st.metric("Contactos", snap.get("contact_count", 0))
+            with stats_col3:
+                st.metric("Chats", snap.get("chat_count", 0))
+        elif snap and snap.get("ok") and not snap.get("connected"):
+            st.warning("⚠️ WhatsApp No Conectado")
+            st.info("Escanea el QR para conectar tu cuenta de WhatsApp")
+            if st.button("📱 Mostrar QR para Conectar", key="show_qr_btn"):
+                qr_code = _evo_action_client(evo_url, evo_key, user_instance, evo_safe).get_qr_code()
+                if qr_code:
+                    st.image(qr_code, caption="Escanea este QR con WhatsApp", width=300)
+                else:
+                    st.error("No se pudo obtener el QR. Verifica que el backend esté corriendo.")
         else:
             st.error("❌ Backend no responde")
             if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
                 st.info("🔧 **Solución:** En Termux, ejecuta `bash ~/start_auto.sh` para iniciar el túnel")
                 st.info("💡 La URL se actualiza automáticamente en GitHub")
-                st.caption(f"URL activa: {st.session_state.get('evo_api_url', EVO_API_URL_CODE)}")
+                st.caption(f"URL activa: {evo_url}")
+
+        # Botones de gestión - visibles para todos (cada usuario gestiona su instancia)
+        st.markdown("---")
+        st.markdown("**🔧 Gestión de Sesión WhatsApp:**")
+        st.caption("Estas acciones afectan a la conexión de WhatsApp de este usuario")
+        col_btn1, col_btn2 = st.columns(2)
+
+        with col_btn1:
+            if st.button("🔄 Reconectar", key="reconnect_btn"):
+                with st.spinner("Reconectando..."):
+                    qr_code = _evo_action_client(evo_url, evo_key, user_instance, evo_safe).reconnect()
+                    if qr_code:
+                        st.success("QR generado. Escanea con WhatsApp.")
+                        st.image(qr_code, caption="Nuevo QR para reconexión", width=300)
+                    else:
+                        st.warning("No se pudo generar QR. Intenta de nuevo.")
+
+        with col_btn2:
+            if st.button("🚪 Cerrar Sesión", key="logout_btn", type="secondary"):
+                if st.session_state.get("confirm_logout"):
+                    with st.spinner("Cerrando sesión..."):
+                        if _evo_action_client(evo_url, evo_key, user_instance, evo_safe).logout():
+                            st.success("Sesión cerrada. WhatsApp desconectado para este usuario.")
+                            st.session_state["confirm_logout"] = False
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("No se pudo cerrar la sesión.")
+                else:
+                    st.session_state["confirm_logout"] = True
+                    st.warning("⚠️ Esto desconectará WhatsApp de este usuario. ¿Estás seguro?")
+
+        if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR" and snap and snap.get("ok"):
+            st.caption(f"URL activa: {evo_url}")
     except Exception as e:
         st.warning(f"⚠️ No se pudo verificar conexión: {e}")
 
@@ -3593,6 +3665,563 @@ elif menu_option == "Base de Pacientes":
         height=600,
         column_config=cols_config
     )
+
+# -----------------------------------------------------------------------------
+# VISTA 6: CHAT CON PACIENTES (2026-09-10)
+# -----------------------------------------------------------------------------
+elif menu_option == "Chat con Pacientes":
+    st.markdown("""
+    <div class="header-container">
+        <div>
+            <h1 class="header-title">Chat con Pacientes</h1>
+            <p class="header-subtitle">Conversaciones de WhatsApp - Solo pacientes de la base</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # --- CSS del chat (inyectado 1x al entrar a la vista) ---
+    st.html("""
+    <style>
+    /* ===== Chat con Pacientes ===== */
+    .ch-bubble {
+        padding: 9px 14px;
+        margin: 5px 0;
+        max-width: 80%;
+        border-radius: 16px;
+        font-size: 0.93rem;
+        line-height: 1.4;
+        word-break: break-word;
+        box-shadow: 0 1px 2px rgba(0,0,0,.06);
+    }
+    .ch-me {
+        background: linear-gradient(135deg,#dcf8c6,#d1f4b8);
+        margin-left: auto;
+        border-top-right-radius: 4px;
+        border: 1px solid #cceea8;
+    }
+    .ch-them {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-top-left-radius: 4px;
+    }
+    .ch-time {
+        margin-top: 4px;
+        font-size: 0.68rem;
+        color: #7c8189;
+        text-align: right;
+        font-weight: 400;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 3px;
+    }
+    .ch-time::after {
+        content: "✓✓";
+        color: #34b7f1;
+        font-size: 0.68rem;
+    }
+    .ch-them .ch-time::after {
+        content: "";
+    }
+    .ch-img-tag {
+        font-size: 0.8rem;
+        color: #555;
+        margin: 4px 0 0;
+    }
+    /* Fondo con textura tipo WhatsApp */
+    [data-testid="stMain"] {
+        background: #ece5dd !important;
+    }
+    .st-key-chat_msg_input [data-testid="stTextInput"] input {
+        border-radius: 20px !important;
+        padding: 10px 16px !important;
+        border: 1px solid #d1d5db !important;
+        background: #ffffff !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,.06) !important;
+        font-size: 0.94rem !important;
+    }
+    .st-key-chat_msg_input [data-testid="stTextInput"] input:focus {
+        border-color: #25d366 !important;
+        box-shadow: 0 0 0 3px rgba(37,211,102,.15) !important;
+    }
+    .st-key-chat_send_btn button {
+        border-radius: 20px !important;
+        padding: 10px 22px !important;
+        font-weight: 700 !important;
+        background: linear-gradient(135deg,#25d366,#128c7e) !important;
+        border: none !important;
+        color: #fff !important;
+        box-shadow: 0 3px 8px rgba(37,211,102,.3) !important;
+        letter-spacing: .2px;
+    }
+    .st-key-chat_send_btn button:hover {
+        filter: brightness(1.05);
+        box-shadow: 0 4px 12px rgba(37,211,102,.4) !important;
+    }
+    /* Caja de mensajes: scroll con padding */
+    [data-testid="stVerticalBlock"]:has(.ch-bubble) {
+        padding: 8px 4px;
+    }
+    /* Bandeja: tarjetas estilo WhatsApp con avatar */
+    .ch-seccion-title {
+        font-weight: 700;
+        font-size: 1.05rem;
+        color: #111827;
+        margin-bottom: 8px;
+    }
+    .ch-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
+        margin-bottom: 8px;
+        box-shadow: 0 1px 2px rgba(0,0,0,.04);
+        transition: transform .1s ease, box-shadow .15s ease, border-color .15s ease;
+        cursor: pointer;
+    }
+    .ch-item:hover {
+        border-color: #25d366;
+        box-shadow: 0 4px 14px rgba(37,211,102,.18);
+        transform: translateY(-1px);
+    }
+    .ch-avatar {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 1.15rem;
+        flex-shrink: 0;
+        box-shadow: 0 2px 6px rgba(0,0,0,.15);
+    }
+    .ch-item-body {
+        flex: 1;
+        min-width: 0;
+    }
+    .ch-item-top {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 6px;
+    }
+    .ch-item-name {
+        font-weight: 600;
+        color: #111827;
+        font-size: .94rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .ch-item-time {
+        font-size: .72rem;
+        color: #9aa0a6;
+        flex-shrink: 0;
+        font-weight: 500;
+    }
+    .ch-item-tag {
+        display: inline-block;
+        margin-top: 3px;
+        background: #f0f4ff;
+        color: #1d4ed8;
+        border: 1px solid #c7d7fe;
+        border-radius: 999px;
+        padding: 1px 9px;
+        font-size: .68rem;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+    .ch-item-last {
+        color: #6b7280;
+        font-size: .8rem;
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .ch-badge {
+        background: linear-gradient(135deg,#25d366,#128c7e);
+        color: #fff;
+        border-radius: 999px;
+        min-width: 22px;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: .72rem;
+        font-weight: 700;
+        padding: 0 7px;
+        flex-shrink: 0;
+        box-shadow: 0 2px 6px rgba(37,211,102,.35);
+    }
+    .ch-badge-zero { display: none; }
+    /* Overlay del boton: transparente, montado arriba de su tarjeta */
+    [class*="st-key-bandeja_"] {
+        position: relative !important;
+        z-index: 3;
+        margin-top: -64px !important;
+        margin-bottom: 0 !important;
+        height: 62px !important;
+    }
+    [class*="st-key-bandeja_"] [data-testid="stButton"],
+    [class*="st-key-bandeja_"] [data-testid="stTooltipHoverTarget"] {
+        display: block;
+        width: 100% !important;
+        height: 62px !important;
+    }
+    [class*="st-key-bandeja_"] div,
+    [class*="st-key-bandeja_"] span {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    [class*="st-key-bandeja_"] button {
+        opacity: 0 !important;
+        background: transparent !important;
+        border: none !important;
+        width: 100% !important;
+        height: 62px !important;
+        min-height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+        border-radius: 14px !important;
+        cursor: pointer !important;
+    }
+    [class*="st-key-bandeja_"]:hover ~ div.element-container .ch-item,
+    div.element-container:has(~ [class*="st-key-bandeja_"]:hover) .ch-item {
+        border-color: #25d366 !important;
+        box-shadow: 0 4px 14px rgba(37,211,102,.18) !important;
+        transform: translateY(-1px);
+    }
+    /* Input de mensaje */
+    .st-key-chat_msg_input [data-testid="stTextInput"] input {
+        border-radius: 18px !important;
+        padding: 10px 16px !important;
+    }
+    /* Boton enviar */
+    .st-key-chat_send_btn button {
+        border-radius: 18px !important;
+        padding: 10px 20px !important;
+        font-weight: 600 !important;
+    }
+    /* Cabecera conversacion */
+    .ch-conv-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        margin-bottom: 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,.05);
+    }
+    .ch-avatar-lg {
+        width: 48px;
+        height: 48px;
+        font-size: 1.3rem;
+    }
+    .ch-conv-info {
+        flex: 1;
+        min-width: 0;
+    }
+    .ch-conv-name {
+        font-weight: 700;
+        font-size: 1.02rem;
+        color: #0f172a;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .ch-conv-sub {
+        color: #475569;
+        font-size: 0.78rem;
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .ch-online {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: #16a34a;
+        font-size: 0.78rem;
+        font-weight: 600;
+        flex-shrink: 0;
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        padding: 4px 10px;
+        border-radius: 999px;
+    }
+    .ch-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #16a34a;
+        animation: ch-pulse 1.6s infinite;
+        display: inline-block;
+    }
+    @keyframes ch-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: .35; }
+    }
+    </style>
+    """)
+
+    # --- Parametros del cliente (url/key/instancia) ---
+    evo_url_chat = st.session_state.get("evo_api_url", EVO_API_URL_CODE)
+    evo_key_chat = st.session_state.get("evo_api_key", EVO_API_KEY_CODE)
+    evo_safe_chat = st.session_state.get("evo_safe_mode", False)
+    _account_id_chat = st.session_state.get("account_id", MASTER_ACCOUNT_ID)
+    evo_inst_chat = get_user_instance_name(_account_id_chat)
+    st.session_state["evo_instance"] = evo_inst_chat
+
+    evo_client_chat = _evo_chat_client(evo_url_chat, evo_key_chat, evo_inst_chat, evo_safe_chat)
+
+    if evo_client_chat is None or not evo_key_chat:
+        st.error("No se pudo conectar con Evolution API. Verifique la configuracion.")
+    else:
+        # --- Estado de sesion para el chat ---
+        st.session_state.setdefault("chat_selected_jid", None)
+        st.session_state.setdefault("chat_search", "")
+
+        # --- Boton de refresco manual (limpia caches + recarga datos) ---
+        col_refresh, _ = st.columns([1, 5])
+        with col_refresh:
+            if st.button("Refrescar", key="btn_refresh_chat"):
+                st.cache_data.clear()
+                st.cache_data.clear()
+                st.cache_data.clear()
+                st.session_state.chat_selected_jid = None
+                st.rerun()
+
+        # --- Construir indice de pacientes desde la base (cacheado 90s) ---
+        df_base_chat = _cached_get_data_fresh(MASTER_ACCOUNT_ID)
+        pacientes_index = build_pacientes_chat_index(df_base_chat) if df_base_chat is not None else {}
+
+        # --- Obtener lista de chats de Evolution API (cacheado 30s) ---
+        try:
+            chats_raw = _cached_list_chats(evo_url_chat, evo_key_chat, evo_inst_chat, limite=50)
+        except Exception as e:
+            chats_raw = []
+            st.warning(f"Error al obtener chats: {e}")
+
+        # --- Filtrar: solo chats que correspondan a pacientes de la base ---
+        chats_pacientes = []
+        for chat in chats_raw:
+            jid = chat.get("remoteJid", "")
+            if jid in pacientes_index:
+                info = pacientes_index[jid]
+                # Extraer texto del ultimo mensaje de forma robusta
+                lm = chat.get("lastMessage")
+                ultimo_texto = ""
+                if isinstance(lm, dict):
+                    ultimo_texto = lm.get("conversation", "") or ""
+                    if not ultimo_texto:
+                        m = lm.get("message")
+                        if isinstance(m, dict):
+                            ultimo_texto = m.get("conversation", "") or ""
+                            if not ultimo_texto:
+                                etm = m.get("extendedTextMessage") or {}
+                                ultimo_texto = etm.get("text", "") or ""
+                            if not ultimo_texto:
+                                img = m.get("imageMessage") or {}
+                                if img.get("caption"):
+                                    ultimo_texto = str(img["caption"])
+                                elif img:
+                                    ultimo_texto = "[Imagen]"
+                chats_pacientes.append({
+                    "jid": jid,
+                    "nombre": info["nombre"] or chat.get("pushName", "") or jid.split("@")[0],
+                    "rut": info["rut"],
+                    "pol": info["pol"],
+                    "etiqueta": info["etiqueta"],
+                    "telefono": info["telefono"],
+                    "unread": chat.get("unreadCount", 0),
+                    "last_msg": ultimo_texto,
+                    "ultima_hora": formatear_hora_mensaje(
+                        chat.get("t") or chat.get("lastMessageTimestamp") or 0
+                    )
+                })
+
+        # --- Ordenar: no leidos primero, luego alfabeticamente ---
+        chats_pacientes.sort(key=lambda x: (-x["unread"], x["nombre"]))
+
+        # --- Buscador ---
+        search_chat = st.text_input("Buscar paciente por nombre, RUT o telefono", key="chat_search_input")
+        if search_chat:
+            search_lower = search_chat.lower()
+            chats_pacientes = [
+                c for c in chats_pacientes
+                if search_lower in c["nombre"].lower()
+                or search_lower in c["rut"].lower()
+                or search_lower in c["telefono"]
+            ]
+
+        # --- Layout: Bandeja izquierda + Conversacion derecha ---
+        _avatar_grads = [
+            "linear-gradient(135deg,#16a34a,#059669)",
+            "linear-gradient(135deg,#2563eb,#1d4ed8)",
+            "linear-gradient(135deg,#9333ea,#7e22ce)",
+            "linear-gradient(135deg,#ea580c,#c2410c)",
+            "linear-gradient(135deg,#0891b2,#0e7490)",
+            "linear-gradient(135deg,#db2777,#be185d)",
+        ]
+        col_bandeja, col_conv = st.columns([2, 5])
+
+        # --- BANDEJA IZQUIERDA ---
+        with col_bandeja:
+            st.markdown('<div class="ch-seccion-title">💬 Bandeja</div>', unsafe_allow_html=True)
+            if not chats_pacientes:
+                st.info("No hay conversaciones activas con pacientes de la base.")
+            else:
+                for _i, chat_info in enumerate(chats_pacientes):
+                    jid = chat_info["jid"]
+                    nombre = chat_info["nombre"] or "Sin nombre"
+                    unread = chat_info["unread"]
+                    last_msg = (chat_info["last_msg"] or "").strip()
+                    last_msg = (last_msg[:52] + "…") if len(last_msg) > 52 else last_msg
+                    etiqueta = (chat_info.get("etiqueta") or "").strip()
+                    hora = chat_info.get("ultima_hora", "")
+                    if not hora:
+                        hora = ""
+
+                    # Avatar: inicial + gradiente según posición
+                    _grad = _avatar_grads[_i % len(_avatar_grads)]
+                    _inicial = html.escape(nombre[:1].upper() if nombre else "?")
+                    _nombre_e = html.escape(nombre)
+                    _etq_e = html.escape(etiqueta) if etiqueta else ""
+                    _last_e = html.escape(last_msg)
+                    _hora_e = html.escape(hora)
+                    _badge_html = f'<span class="ch-badge">{unread}</span>' if unread > 0 else '<span class="ch-badge ch-badge-zero"></span>'
+
+                    st.markdown(
+                        f'''<div class="ch-item">
+                            <div class="ch-avatar" style="background:{_grad}">{_inicial}</div>
+                            <div class="ch-item-body">
+                                <div class="ch-item-top">
+                                    <span class="ch-item-name">{_nombre_e}</span>
+                                    <span class="ch-item-time">{_hora_e}</span>
+                                </div>
+                                {f'<div class="ch-item-tag">🏷️ {_etq_e}</div>' if etiqueta else ''}
+                                <div class="ch-item-last">{_last_e}</div>
+                            </div>
+                            {_badge_html}
+                        </div>''',
+                        unsafe_allow_html=True
+                    )
+                    if st.button(
+                        "",
+                        key=f"bandeja_{jid}",
+                        use_container_width=True,
+                        help=f"Abrir conversación con {nombre}"
+                    ):
+                        st.session_state.chat_selected_jid = jid
+                        st.rerun()
+
+        # --- CONVERSACION DERECHA ---
+        with col_conv:
+            selected_jid = st.session_state.chat_selected_jid
+            if selected_jid and selected_jid in pacientes_index:
+                info = pacientes_index[selected_jid]
+                _ini = html.escape((info["nombre"] or "?")[:1].upper())
+                _nom = html.escape(info["nombre"] or "")
+                _rut = html.escape(info["rut"] or "")
+                _pol = html.escape(info["pol"] or "")
+                st.markdown(
+                    f'<div class="ch-conv-header">'
+                    f'<div class="ch-avatar ch-avatar-lg" style="background:{_avatar_grads[0]}">{_ini}</div>'
+                    f'<div class="ch-conv-info"><div class="ch-conv-name">{_nom}</div>'
+                    f'<div class="ch-conv-sub">🆔 {_rut} {(" • " + _pol) if _pol else ""}</div></div>'
+                    f'<div class="ch-online"><span class="ch-dot"></span> En línea</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+
+                # --- Cargar mensajes (cacheado 20s) ---
+                try:
+                    mensajes = _cached_get_messages(
+                        evo_url_chat, evo_key_chat, evo_inst_chat,
+                        info["telefono"], limite=20
+                    )
+                except Exception as e:
+                    mensajes = []
+                    st.warning(f"No se pudieron cargar mensajes: {e}")
+
+                # --- Renderizar conversation ---
+                if not mensajes:
+                    st.caption("No hay mensajes recientes en esta conversación.")
+
+                for msg in mensajes:
+                    ts = formatear_hora_mensaje(msg.get("timestamp", 0))
+                    body = html.escape(msg.get("body", ""))
+                    from_me = msg.get("fromMe", False)
+                    has_img = msg.get("hasImage", False)
+                    img_url = msg.get("imageUrl")
+
+                    if from_me:
+                        st.markdown(
+                            f'<div class="ch-bubble ch-me">{body}<div class="ch-time">{ts}</div></div>',
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        msg_content = body
+                        if has_img and img_url:
+                            msg_content += '<div class="ch-img-tag">📷 [Imagen]</div>'
+                        st.markdown(
+                            f'<div class="ch-bubble ch-them">{msg_content}<div class="ch-time">{ts}</div></div>',
+                            unsafe_allow_html=True
+                        )
+
+                        # Boton ver imagen
+                        if has_img and img_url:
+                            if st.button("Ver imagen", key=f"img_{selected_jid}_{ts}"):
+                                with st.spinner("Descargando imagen..."):
+                                    b64 = evo_client_chat.get_media_b64(img_url)
+                                    if b64:
+                                        st.image(b64, width=300)
+                                    else:
+                                        st.error("No se pudo descargar la imagen.")
+
+                # --- Input + Enviar ---
+                st.markdown("---")
+                col_in, col_send = st.columns([5, 1])
+                with col_in:
+                    chat_input = st.text_input(
+                        "Escribir mensaje...",
+                        key="chat_msg_input",
+                        placeholder="Escribir un mensaje...",
+                        label_visibility="collapsed"
+                    )
+                with col_send:
+                    send_clicked = st.button("Enviar", key="chat_send_btn", type="primary", use_container_width=True)
+
+                if send_clicked and chat_input.strip():
+                    with st.spinner("Enviando..."):
+                        ok, log_msg = evo_client_chat.send_message(
+                            info["telefono"], chat_input.strip(), delay_ms=0
+                        )
+                    if ok:
+                        st.success("Mensaje enviado ✅")
+                        # Limpiar cache de mensajes + lista de chats para refrescar
+                        st.cache_data.clear()
+                        st.cache_data.clear()
+                        if "chat_msg_input" in st.session_state:
+                            del st.session_state["chat_msg_input"]
+                        st.rerun()
+                    else:
+                        st.error(f"No se pudo enviar el mensaje: {log_msg}")
+            else:
+                st.info("Selecciona una conversación de la bandeja para ver los mensajes.")
 
 # --- FOOTER ---
 st.markdown("---")
