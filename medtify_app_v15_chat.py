@@ -1817,13 +1817,12 @@ with st.sidebar:
             )
             st.session_state["evo_api_key"] = evo_key
         
-            evo_instance = st.text_input(
-                "Session ID",
-                value=st.session_state.get("evo_instance", secrets_evo_instance),
-                key="openwa_instance_input",
-                help="Nombre de la sesión de WhatsApp"
-            )
-            st.session_state["evo_instance"] = evo_instance
+            # Seguridad: sesión derivada SIEMPRE de la cuenta Medtify (no editable).
+            _inst_account = st.session_state.get("account_id", "")
+            _auto_session = get_user_instance_name(_inst_account) if _inst_account else "medtify-?"
+            st.markdown(f"**🔒 Sesión de esta cuenta (no editable):** `{_auto_session}`")
+            st.caption("Se deriva automáticamente de la cuenta Medtify. Solo muestra mensajes de este WhatsApp.")
+            st.session_state["evo_instance"] = _auto_session
         
             evo_safe = st.checkbox(
                 "Safe Mode (no enviar mensajes)",
@@ -1859,13 +1858,12 @@ with st.sidebar:
             )
             st.session_state["evo_api_key"] = evo_key
         
-            evo_instance = st.text_input(
-                "Instance Name",
-                value=st.session_state.get("evo_instance", secrets_evo_instance),
-                key="evo_instance_input",
-                help="Nombre de la instancia de WhatsApp"
-            )
-            st.session_state["evo_instance"] = evo_instance
+            # Seguridad: instancia derivada SIEMPRE de la cuenta Medtify (no editable).
+            _inst_account = st.session_state.get("account_id", "")
+            _auto_instance = get_user_instance_name(_inst_account) if _inst_account else "medtify-?"
+            st.markdown(f"**🔒 Instancia de esta cuenta (no editable):** `{_auto_instance}`")
+            st.caption("Se deriva automáticamente de la cuenta Medtify. Solo muestra mensajes de este WhatsApp.")
+            st.session_state["evo_instance"] = _auto_instance
         
             evo_safe = st.checkbox(
                 "Safe Mode (no enviar mensajes)",
@@ -3982,6 +3980,9 @@ elif menu_option == "Chat con Pacientes":
     evo_key_chat = st.session_state.get("evo_api_key", EVO_API_KEY_CODE)
     evo_safe_chat = st.session_state.get("evo_safe_mode", False)
     _account_id_chat = st.session_state.get("account_id", MASTER_ACCOUNT_ID)
+    if not str(_account_id_chat).strip():
+        st.error("🔒 Confidencialidad: sesión sin cuenta válida. Acceso al chat bloqueado.")
+        st.stop()
     evo_inst_chat = get_user_instance_name(_account_id_chat)
     st.session_state["evo_instance"] = evo_inst_chat
 
@@ -4098,6 +4099,7 @@ elif menu_option == "Chat con Pacientes":
         # --- BANDEJA IZQUIERDA ---
         with col_bandeja:
             st.markdown('<div class="ch-seccion-title">💬 Bandeja</div>', unsafe_allow_html=True)
+            st.caption(f"🔒 Solo conversaciones de la instancia {evo_inst_chat} (cuenta actual).")
             if not chats_pacientes:
                 st.info("No hay conversaciones activas con pacientes de la base.")
             else:
