@@ -859,11 +859,78 @@ def get_data_fresh(account_id, worksheet_name=None, worksheet_index=0):
     print(f"[DEBUG get_data_fresh] Returning df shape: {df.shape}, columns: {list(df.columns)}", file=sys.stderr)
     return df
 
+def _sanitize_account_id(account_id: str) -> str:
+    """Sanitiza account_id para nombres de instancia Evolution válidos."""
+    return str(account_id).replace("@", "-").replace(".", "-").lower()
+
+
+def _generar_wa_instance(account_id: str) -> str:
+    """Genera un nombre de instancia WhatsApp aleatorio por cuenta:
+    medtify-<cuenta>-<token8>. El token no es derivable desde el sheet."""
+    import secrets
+    safe_id = _sanitize_account_id(account_id)
+    token = secrets.token_hex(4)  # 8 caracteres hex aleatorios
+    return f"medtify-{safe_id}-{token}" if safe_id else f"medtify-{token}"
+
+
+@st.cache_data(ttl=600)
+def _cached_wa_instance_name(account_id: str) -> str:
+    """Lee WA_INSTANCE_NAME del Admin Master (fila por CUENTA). Si está vacío,
+    genera el token, lo persiste en la hoja y lo devuelve."""
+    if not account_id:
+        return ""
+    try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(BOOTSTRAP_CREDS, scopes=scope)
+        client = gspread.authorize(creds)
+        sheet_admin = client.open_by_url(URL_ADMIN_MASTER).sheet1
+        all_values = sheet_admin.get_all_values()
+        if not all_values:
+            return ""
+        raw_headers = all_values[0]
+        col_cuenta = 0
+        col_name = -1
+        for i, h in enumerate(raw_headers):
+            hs = str(h).strip()
+            if hs == "CUENTA":
+                col_cuenta = i
+            elif hs == "WA_INSTANCE_NAME":
+                col_name = i  # 0-based
+        if col_name == -1:
+            # Columna no existe en la hoja: no escribimos, se usa fallback derivado.
+            return ""
+        target = str(account_id).strip()
+        for idx, row in enumerate(all_values[1:], start=2):  # idx = fila 1-based gspread
+            if str(row[col_cuenta]).strip() == target:
+                val = str(row[col_name]).strip() if col_name < len(row) else ""
+                if val:
+                    return val
+                nuevo = _generar_wa_instance(account_id)
+                try:
+                    sheet_admin.update_cell(idx, col_name + 1, nuevo)
+                except Exception as e:
+                    print(f"[Medtify Warning] No se pudo escribir WA_INSTANCE_NAME: {e}", file=sys.stderr)
+                    return ""  # sin escritura -> fallback derivado
+                return nuevo
+        return ""
+    except Exception as e:
+        print(f"[Medtify Warning] No se pudo leer WA_INSTANCE_NAME: {e}", file=sys.stderr)
+        return ""
+
+
 def get_user_instance_name(account_id: str) -> str:
-    """Generate a unique Evolution API instance name per user."""
+    """Nombre de instancia WhatsApp por cuenta (confidencialidad multi-cuenta).
+
+    Lee WA_INSTANCE_NAME del Admin Master (columna nueva, token aleatorio por
+    cuenta, no editable desde la UI). Si no está disponible (columna inexistente,
+    sin acceso, cuenta ausente), cae al nombre determinista medtify-<cuenta>
+    (comportamiento legacy) para no romper instancias ya conectadas.
+    """
     # Sanitize account_id to be a valid instance name
-    safe_id = str(account_id).replace("@", "-").replace(".", "-").lower()
-    return f"medtify-{safe_id}"
+    safe_id = _sanitize_account_id(account_id)
+    legacy = f"medtify-{safe_id}" if safe_id else "medtify-?"
+    nombre = _cached_wa_instance_name(account_id)
+    return nombre if nombre else legacy
 
 def init_evolution_client():
     """Initialize Evolution API client with per-user instance."""
