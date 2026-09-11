@@ -31,7 +31,7 @@ else:
     from evolution_client import EvolutionClient
     logger.info("[CONFIG] Using Evolution API backend")
 
-from chat_helpers import normalizar_telefono_chat, make_jid, build_pacientes_chat_index, formatear_hora_mensaje
+from chat_helpers import normalizar_telefono_chat, make_jid, build_pacientes_chat_index, build_autorizados_chat_index, ordenar_chats_por_ultimo_mensaje, formatear_hora_mensaje
 import gspread
 from google.oauth2.service_account import Credentials
 from google.auth.transport.requests import Request
@@ -331,6 +331,8 @@ def load_app_configuration(account_id):
             config['mensaje'] = "La hoja Admin está vacía."
             return config
         raw_headers = all_values[0]
+        # FIX: trim de headers para evitar el bug de espacios (ej: "WA_INSTANCE_NAME " no matchea "WA_INSTANCE_NAME")
+        raw_headers = [str(h).strip() for h in raw_headers]
         # Deduplicar headers: si hay duplicados, agregar sufijo numérico
         seen = {}
         headers = []
@@ -874,6 +876,48 @@ def _generar_wa_instance(account_id: str) -> str:
 
 
 @st.cache_data(ttl=600)
+def _cached_wa_instance_name_robusta(account_id: str) -> str:
+    """Versión robusta de _cached_wa_instance_name: lee WA_INSTANCE_NAME del Admin
+    Master con trim de headers (mismo patrón que load_app_configuration) para evitar
+    el bug de espacios en headers (ej: header real "WA_INSTANCE_NAME " con espacio).
+
+    Si la columna o la fila no existen devuelve '' (el caller cae al legacy).
+    """
+    if not account_id:
+        return ""
+    try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(BOOTSTRAP_CREDS, scopes=scope)
+        client = gspread.authorize(creds)
+        sheet_admin = client.open_by_url(URL_ADMIN_MASTER).sheet1
+        all_values = sheet_admin.get_all_values()
+        if not all_values:
+            return ""
+        # Trim de TODOS los headers (fix bug "WA_INSTANCE_NAME ")
+        headers = [str(h).strip() for h in all_values[0]]
+        col_cuenta = None
+        col_inst = None
+        for i, h in enumerate(headers):
+            if col_cuenta is None and h == "CUENTA":
+                col_cuenta = i
+            elif col_inst is None and h == "WA_INSTANCE_NAME":
+                col_inst = i
+        if col_cuenta is None or col_inst is None:
+            return ""
+        target = str(account_id).strip().lower()
+        for row in all_values[1:]:
+            if len(row) <= max(col_cuenta, col_inst):
+                continue
+            cuenta_val = str(row[col_cuenta]).strip().lower()
+            if cuenta_val == target:
+                return str(row[col_inst]).strip()
+        return ""
+    except Exception as e:
+        logger.error(f"[_cached_wa_instance_name_robusta] error: {e}")
+        return ""
+
+
+@st.cache_data(ttl=600)
 def _cached_wa_instance_name(account_id: str) -> str:
     """Lee WA_INSTANCE_NAME del Admin Master (fila por CUENTA). Si está vacío,
     genera el token, lo persiste en la hoja y lo devuelve."""
@@ -929,7 +973,7 @@ def get_user_instance_name(account_id: str) -> str:
     # Sanitize account_id to be a valid instance name
     safe_id = _sanitize_account_id(account_id)
     legacy = f"medtify-{safe_id}" if safe_id else "medtify-?"
-    nombre = _cached_wa_instance_name(account_id)
+    nombre = _cached_wa_instance_name_robusta(account_id)
     return nombre if nombre else legacy
 
 def init_evolution_client():
@@ -4074,7 +4118,9 @@ elif menu_option == "Chat con Pacientes":
 
         # --- Construir indice de pacientes desde la base (cacheado 90s) ---
         df_base_chat = _cached_get_data_fresh(MASTER_ACCOUNT_ID)
-        pacientes_index = build_pacientes_chat_index(df_base_chat) if df_base_chat is not None else {}
+        # FIX: la bandeja muestra SOLO usuarios autorizados (ESTADO == "NOTIFICADO OK")
+        # según la hoja propia de la cuenta (URL_SHEET). No se fusiona con la base completa.
+        pacientes_index = build_autorizados_chat_index(df_base_chat) if df_base_chat is not None else {}
 
         # --- Obtener lista de chats de Evolution API (cacheado 30s) ---
         try:
@@ -4115,14 +4161,15 @@ elif menu_option == "Chat con Pacientes":
                     "etiqueta": info["etiqueta"],
                     "telefono": info["telefono"],
                     "unread": chat.get("unreadCount", 0),
+                    "ts_chat": chat.get("t") or chat.get("lastMessageTimestamp") or 0,
                     "last_msg": ultimo_texto,
                     "ultima_hora": formatear_hora_mensaje(
                         chat.get("t") or chat.get("lastMessageTimestamp") or 0
                     )
                 })
 
-        # --- Ordenar: no leidos primero, luego alfabeticamente ---
-        chats_pacientes.sort(key=lambda x: (-x["unread"], x["nombre"]))
+        # --- Ordenar: por último mensaje recibido (más reciente primero) ---
+        chats_pacientes = ordenar_chats_por_ultimo_mensaje(chats_pacientes)
 
         # --- Buscador ---
         search_chat = st.text_input("Buscar paciente por nombre, RUT o telefono", key="chat_search_input")

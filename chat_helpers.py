@@ -110,3 +110,79 @@ def formatear_hora_mensaje(timestamp):
     if dt.date() == now.date():
         return dt.strftime("%H:%M")
     return dt.strftime("%d/%m %H:%M")
+
+
+def build_autorizados_chat_index(df_base, col_estado="ESTADO", valor_ok="NOTIFICADO OK"):
+    """
+    Build a lookup index de USUARIOS AUTORIZADOS desde la hoja propia de la cuenta (URL_SHEET).
+
+    SOLO incluye filas donde la columna ESTADO == 'NOTIFICADO OK'.
+    Misma extracción que build_pacientes_chat_index (jid, nombre, rut, pol, etiqueta, telefono),
+    pero NUNCA fusiona con la base completa: el universo de la bandeja es exclusivamente
+    los números autorizados.
+
+    Returns: dict {jid: {"nombre", "rut", "pol", "etiqueta", "telefono"}}
+    """
+    index = {}
+    if df_base is None or df_base.empty:
+        return index
+
+    # Normalizar nombre de columna (trim) por si viene como "ESTADO "
+    cols = {str(c).strip(): c for c in df_base.columns}
+    col_estado_real = cols.get(col_estado)
+    col_tel = cols.get("TELEFONO", "TELEFONO")
+    if col_tel not in df_base.columns:
+        col_tel = "TELEFONO"
+
+    for _, row in df_base.iterrows():
+        # Filtro ESTADO == NOTIFICADO OK (trim por robustez)
+        estado = str(row.get(col_estado_real, "") if col_estado_real else row.get(col_estado, "")).strip()
+        if estado != valor_ok:
+            continue
+
+        tel = str(row.get(col_tel, "")).strip()
+        if not tel or tel == "nan":
+            continue
+        try:
+            jid = make_jid(tel)
+        except (ValueError, TypeError):
+            continue
+
+        nombre = str(row.get(cols.get("NOMBRE_PACIENTE", "NOMBRE_PACIENTE"), "")).strip()
+        rut = str(row.get(cols.get("RUT", "RUT"), "")).strip()
+        pol = str(row.get(cols.get("PROFESION", "PROFESION"), "")).strip()
+        fecha = str(row.get(cols.get("FECHA_AGENDADA", "FECHA_AGENDADA"), "")).strip()
+        hora = str(row.get(cols.get("HORA_AGENDADA", "HORA_AGENDADA"), "")).strip()
+
+        etiqueta = ""
+        if pol and pol != "nan":
+            etiqueta = pol
+        if fecha and fecha != "nan" and hora and hora != "nan":
+            etiqueta = f"{etiqueta} | {fecha} {hora}".strip(" |")
+
+        index[jid] = {
+            "nombre": nombre if nombre != "nan" else "",
+            "rut": rut if rut != "nan" else "",
+            "pol": pol if pol != "nan" else "",
+            "etiqueta": etiqueta,
+            "telefono": tel,
+        }
+
+    return index
+
+
+def ordenar_chats_por_ultimo_mensaje(chats_pacientes, reverse=True):
+    """
+    Ordena la lista de chats de la bandeja por el timestamp del último mensaje recibido,
+    del más reciente al más antiguo (reverse=True).
+
+    Cada chat DEBE traer la llave "ts_chat" (unix timestamp del último mensaje).
+    Si falta, se usa 0 (va al final). No muta la lista original.
+    """
+    if not chats_pacientes:
+        return []
+    return sorted(
+        chats_pacientes,
+        key=lambda c: int(c.get("ts_chat", 0) or 0),
+        reverse=reverse
+    )
