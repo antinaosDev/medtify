@@ -1201,6 +1201,55 @@ def enviar_mensaje_wsp(client, numero, mensaje):
     return client.send_message(numero, mensaje)
 
 # === FUNCIÓN DE MENSAJES DINÁMICOS ===
+def _guardar_plantillas_en_admin(account_id: str, msg_agend: str, msg_reagend: str):
+    """Guarda las plantillas MENSAJE_AGEND/MENSAJE_REAGEND del account en el Admin Master.
+
+    Busca la fila por CUENTA (con trim de headers), escribe las celdas con gspread
+    y devuelve (ok, mensaje).
+    """
+    try:
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(BOOTSTRAP_CREDS, scopes=scope)
+        client = gspread.authorize(creds)
+        sheet_admin = client.open_by_url(URL_ADMIN_MASTER).sheet1
+        all_values = sheet_admin.get_all_values()
+        if not all_values:
+            return False, "La hoja Admin está vacía."
+        headers = [str(h).strip() for h in all_values[0]]
+        col_cuenta = None
+        col_agend = None
+        col_reagend = None
+        for i, h in enumerate(headers):
+            hh = h.upper()
+            if col_cuenta is None and hh == "CUENTA":
+                col_cuenta = i
+            elif col_agend is None and hh == "MENSAJE_AGEND":
+                col_agend = i
+            elif col_reagend is None and hh == "MENSAJE_REAGEND":
+                col_reagend = i
+        if col_cuenta is None or (col_agend is None and col_reagend is None):
+            return False, "No se encontraron columnas CUENTA/MENSAJE_AGEND/MENSAJE_REAGEND en el Admin Master."
+        target = str(account_id).strip().lower()
+        for r, row in enumerate(all_values[1:], start=2):
+            if len(row) <= col_cuenta:
+                continue
+            if str(row[col_cuenta]).strip().lower() == target:
+                fila_actualizada = False
+                if col_agend is not None:
+                    sheet_admin.update_cell(r, col_agend + 1, msg_agend)
+                    fila_actualizada = True
+                if col_reagend is not None:
+                    sheet_admin.update_cell(r, col_reagend + 1, msg_reagend)
+                    fila_actualizada = True
+                if fila_actualizada:
+                    return True, "✅ Plantillas guardadas correctamente en tu cuenta."
+                return False, "No se encontraron columnas de plantilla para actualizar."
+        return False, "No se encontró tu cuenta en el Admin Master."
+    except Exception as e:
+        logger.error(f"Error guardando plantillas en Admin: {e}")
+        return False, f"Error al guardar: {e}"
+
+
 def get_template(row, tipo):
     # Convertimos la fila a diccionario para usar .format(**row)
     # Aseguramos que todos los valores sean string para evitar errores
@@ -1879,7 +1928,42 @@ with st.sidebar:
     
     st.markdown(f"**Estado Sistema:**")
     st.markdown("🟢 Conectado a Sheets")
-    
+
+    # ==========================================================
+    # PLANTILLAS DE MENSAJES: editable por cada cuenta
+    # ==========================================================
+    _acc_id_tpl = st.session_state.get("account_id", MASTER_ACCOUNT_ID)
+    _tpl_actual_sb = CUSTOM_TEMPLATES if "CUSTOM_TEMPLATES" in globals() else APP_CONFIG.get("templates", {})
+    _msg_agend_edit = str((_tpl_actual_sb or {}).get("MSG_AGEND", "") or "")
+    _msg_reagend_edit = str((_tpl_actual_sb or {}).get("MSG_REAGEND", "") or "")
+    with st.expander("Plantillas de Mensajes (recordar horario y reagendar)", expanded=False):
+        st.caption("Se reemplazan con los datos de cada paciente. Variables disponibles:")
+        st.code("{NOMBRE_PACIENTE} {RUT} {EDAD_ACTUAL} {GENERO} {FECHA_AGENDADA} {HORA_AGENDADA} {PROFESION} {NOMBRE_PROFESIONAL} {MOTIVO_CONSULTA} {TELEFONO} {CENTRO_SALUD} {SECTOR} {DISTRITO} {OBSERVACION} {TOTAL_REV}\nReagendamiento: {NUEVA_FECHA} {HORA_NUEVA_FECHA} {CONFIRMA_HORA} {CONFIRMA_REAGEN} {NOM_PROF_REASIG} {MOTIVO_CONSULTA_REA}")
+        _nuevo_agend = st.text_area("Recordatorio de hora", value=_msg_agend_edit, height=140, key="tpl_agend_edit", help="Vacío = usa el mensaje por defecto del sistema.")
+        _nuevo_reagend = st.text_area("Reagendamiento de hora", value=_msg_reagend_edit, height=140, key="tpl_reagend_edit", help="Vacío = usa el mensaje por defecto del sistema.")
+        _c1, _c2 = st.columns(2)
+        if _c1.button("Guardar plantillas", key="btn_save_templates", use_container_width=True):
+            _llaves_agend = _nuevo_agend.count("{") != _nuevo_agend.count("}")
+            _llaves_reagend = _nuevo_reagend.count("{") != _nuevo_reagend.count("}")
+            if _llaves_agend or _llaves_reagend:
+                st.error("Llaves { } desbalanceadas. Revisa las plantillas antes de guardar.")
+            else:
+                _ok_g, _msg_g = _guardar_plantillas_en_admin(_acc_id_tpl, _nuevo_agend, _nuevo_reagend)
+                if _ok_g:
+                    CUSTOM_TEMPLATES["MSG_AGEND"] = _nuevo_agend
+                    CUSTOM_TEMPLATES["MSG_REAGEND"] = _nuevo_reagend
+                    st.success(_msg_g)
+                else:
+                    st.error(_msg_g)
+        if _c2.button("Restaurar mensaje por defecto", key="btn_reset_templates", use_container_width=True):
+            _ok_r, _msg_r = _guardar_plantillas_en_admin(_acc_id_tpl, "", "")
+            if _ok_r:
+                CUSTOM_TEMPLATES["MSG_AGEND"] = ""
+                CUSTOM_TEMPLATES["MSG_REAGEND"] = ""
+                st.success("Plantillas restauradas al mensaje por defecto del sistema.")
+            else:
+                st.error(_msg_r)
+
     # Initialize session state for logout confirmation
     if "confirm_logout" not in st.session_state:
         st.session_state["confirm_logout"] = False

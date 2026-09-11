@@ -1,5 +1,24 @@
 # CHANGELOG — Medtify V15 Chat
 
+## [2026-09-11] Plantillas de mensajes editables por cuenta
+
+### Qué se agregó
+- **Sección "Plantillas de Mensajes"** en la sidebar (visible para CADA cuenta activa, no solo programador):
+  - `st.text_area` para la plantilla de **Recordatorio** (`MENSAJE_AGEND`) y **Reagendamiento** (`MENSAJE_REAGEND`).
+  - Lista de variables disponibles (ej. `{NOMBRE_PACIENTE}`, `{HORA_AGENDADA}`, `{FECHA_AGENDADA}`…).
+  - Validación de llaves `{ }` balanceadas antes de guardar.
+  - Botón **Guardar** → escribe en el Admin Master vía gspread (`update_cell`) en la fila de la cuenta.
+  - Botón **Restaurar mensaje por defecto** → vacía las celdas y `get_template()` usa el default interno.
+  - Actualiza `CUSTOM_TEMPLATES` en memoria al guardar (sin reiniciar sesión).
+- Nueva función **`_guardar_plantillas_en_admin(account_id, msg_agend, msg_reagend)`**:
+  - Conecta con `BOOTSTRAP_CREDS` + `URL_ADMIN_MASTER`, busca la fila por `CUENTA` (trim),
+    localiza columnas `MENSAJE_AGEND` / `MENSAJE_REAGEND` (trim de headers) y hace `update_cell`.
+
+### Archivos
+- `medtify_app_v15_chat.py` (fuente) — se sincroniza a `medtify_app_v15.py` (desplegado en Streamlit).
+
+---
+
 ## [2026-09-11] Fix "Backend no responde" en cuentas sin leer WA_INSTANCE_NAME
 
 ### Problema
