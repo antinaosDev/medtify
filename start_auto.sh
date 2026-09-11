@@ -265,18 +265,25 @@ if [ -d "$REPO_DIR" ]; then
     # Pull últimos cambios de GitHub
     /data/data/com.termux/files/usr/bin/git pull origin main 2>/dev/null
     
-    # Actualizar la URL en el código usando sed
-    OLD_URL_CODE=$(grep -o 'EVO_API_URL_CODE = "https://[^"]*"' medtify_app_v15.py | grep -o 'https://[^"]*')
-    
-    if [ "$OLD_URL_CODE" != "$NEW_URL" ]; then
-        echo "  URL anterior: $OLD_URL_CODE"
-        echo "  URL nueva:    $NEW_URL"
-        
-        # Actualizar en el archivo
-        sed -i "s|EVO_API_URL_CODE = \"https://[^\"]*\"|EVO_API_URL_CODE = \"$NEW_URL\"|" medtify_app_v15.py
-        
-        # Git push
-        /data/data/com.termux/files/usr/bin/git add medtify_app_v15.py
+    # Actualizar la URL en TODOS los archivos del app (desplegado + fuente)
+    # IMPORTANTE: medtify_app_v15.py y medtify_app_v15_chat.py deben quedar con la
+    # MISMA URL. Si solo se actualiza uno, se desincronizan, y la próxima
+    # sincronización (cp chat -> v15) revertiría la URL nueva por la vieja.
+    ARCHIVOS_APP="medtify_app_v15.py medtify_app_v15_chat.py"
+    # Archivos que aún NO tienen la URL nueva (grep -L lista los que NO matchean)
+    ARCHIVOS_A_ACTUALIZAR=$(grep -L "EVO_API_URL_CODE = \"$NEW_URL\"" $ARCHIVOS_APP 2>/dev/null || true)
+
+    if [ -n "$ARCHIVOS_A_ACTUALIZAR" ]; then
+        echo "  Archivos por actualizar: $ARCHIVOS_A_ACTUALIZAR"
+        for f in $ARCHIVOS_A_ACTUALIZAR; do
+            OLD_URL_CODE=$(grep -o 'EVO_API_URL_CODE = "https://[^"]*"' "$f" | grep -o 'https://[^"]*')
+            echo "  URL anterior ($f): ${OLD_URL_CODE:-sin URL}"
+            echo "  URL nueva:    $NEW_URL"
+            sed -i "s|EVO_API_URL_CODE = \"https://[^\"]*\"|EVO_API_URL_CODE = \"$NEW_URL\"|" "$f"
+        done
+
+        # Git push (ambos archivos para mantenerlos sincronizados)
+        /data/data/com.termux/files/usr/bin/git add medtify_app_v15.py medtify_app_v15_chat.py
         /data/data/com.termux/files/usr/bin/git commit -m "Auto-update: Evolution API URL → $NEW_URL
 
 🤖 Generated with Codebuff
