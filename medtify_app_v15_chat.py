@@ -1930,22 +1930,116 @@ with st.sidebar:
     st.markdown("🟢 Conectado a Sheets")
 
     # ==========================================================
-    # PLANTILLAS DE MENSAJES: editable por cada cuenta
+    # PLANTILLAS DE MENSAJES: editable por cada cuenta (v2 mejorada)
     # ==========================================================
     _acc_id_tpl = st.session_state.get("account_id", MASTER_ACCOUNT_ID)
     _tpl_actual_sb = CUSTOM_TEMPLATES if "CUSTOM_TEMPLATES" in globals() else APP_CONFIG.get("templates", {})
     _msg_agend_edit = str((_tpl_actual_sb or {}).get("MSG_AGEND", "") or "")
     _msg_reagend_edit = str((_tpl_actual_sb or {}).get("MSG_REAGEND", "") or "")
+
+    # --- CSS para seccion de plantillas ---
+    st.markdown("""
+    <style>
+    .tpl-chips { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 12px 0; }
+    .tpl-chip { display:inline-block; background:linear-gradient(135deg,#25d366,#128c7e); color:#fff;
+                border-radius:999px; padding:3px 10px; font-size:11px; font-family:monospace;
+                box-shadow:0 1px 3px rgba(0,0,0,.18); letter-spacing:0.2px; }
+    .tpl-pill { display:inline-block; background:#e6f7ee; border:1px solid #25d366; color:#0b7a4b;
+                border-radius:6px; padding:1px 6px; font-family:monospace; font-size:11px;
+                font-weight:600; margin:1px 0; }
+    .tpl-section { border:1px solid #c3e6cb; border-radius:12px; padding:16px;
+                   background:linear-gradient(180deg,#f8fffb 0%,#f0faf4 100%); }
+    .tpl-label { font-size:13px; color:#555; font-weight:600; margin-bottom:4px; display:block; }
+    .tpl-preview { background:#fff; border:1px solid #e5e9e8; border-radius:8px; padding:12px;
+                   font-size:12.5px; line-height:1.8; white-space:pre-wrap; color:#333; }
+    .tpl-sep { border:none; border-top:1px dashed #c3e6cb; margin:12px 0; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    _vars_all = [
+        "{NOMBRE_PACIENTE}", "{RUT}", "{EDAD_ACTUAL}", "{GENERO}",
+        "{FECHA_AGENDADA}", "{HORA_AGENDADA}", "{PROFESION}",
+        "{NOMBRE_PROFESIONAL}", "{MOTIVO_CONSULTA}", "{TELEFONO}",
+        "{CENTRO_SALUD}", "{SECTOR}", "{DISTRITO}", "{OBSERVACION}",
+        "{TOTAL_REV}", "{NUEVA_FECHA}", "{HORA_NUEVA_FECHA}",
+        "{CONFIRMA_HORA}", "{CONFIRMA_REAGEN}", "{NOM_PROF_REASIG}",
+        "{MOTIVO_CONSULTA_REA}"
+    ]
+
     with st.expander("Plantillas de Mensajes (recordar horario y reagendar)", expanded=False):
-        st.caption("Se reemplazan con los datos de cada paciente. Variables disponibles:")
-        st.code("{NOMBRE_PACIENTE} {RUT} {EDAD_ACTUAL} {GENERO} {FECHA_AGENDADA} {HORA_AGENDADA} {PROFESION} {NOMBRE_PROFESIONAL} {MOTIVO_CONSULTA} {TELEFONO} {CENTRO_SALUD} {SECTOR} {DISTRITO} {OBSERVACION} {TOTAL_REV}\nReagendamiento: {NUEVA_FECHA} {HORA_NUEVA_FECHA} {CONFIRMA_HORA} {CONFIRMA_REAGEN} {NOM_PROF_REASIG} {MOTIVO_CONSULTA_REA}")
-        _nuevo_agend = st.text_area("Recordatorio de hora", value=_msg_agend_edit, height=140, key="tpl_agend_edit", help="Vacío = usa el mensaje por defecto del sistema.")
-        _nuevo_reagend = st.text_area("Reagendamiento de hora", value=_msg_reagend_edit, height=140, key="tpl_reagend_edit", help="Vacío = usa el mensaje por defecto del sistema.")
-        _c1, _c2 = st.columns(2)
-        if _c1.button("Guardar plantillas", key="btn_save_templates", use_container_width=True):
-            _llaves_agend = _nuevo_agend.count("{") != _nuevo_agend.count("}")
-            _llaves_reagend = _nuevo_reagend.count("{") != _nuevo_reagend.count("}")
-            if _llaves_agend or _llaves_reagend:
+        st.markdown('<div class="tpl-section">', unsafe_allow_html=True)
+
+        # --- Chips de variables (solo lectura visual) ---
+        st.markdown('<span class="tpl-label">Variables Recordatorio:</span>', unsafe_allow_html=True)
+        _rec_vars = ["{NOMBRE_PACIENTE}", "{FECHA_AGENDADA}", "{HORA_AGENDADA}",
+                     "{NOMBRE_PROFESIONAL}", "{MOTIVO_CONSULTA}", "{TELEFONO}",
+                     "{CENTRO_SALUD}", "{SECTOR}", "{RUT}", "{EDAD_ACTUAL}",
+                     "{GENERO}", "{OBSERVACION}", "{TOTAL_REV}"]
+        st.markdown('<div class="tpl-chips">' +
+                    ''.join(f'<span class="tpl-chip">{v}</span>' for v in _rec_vars) +
+                    '</div>', unsafe_allow_html=True)
+
+        st.markdown('<span class="tpl-label">Variables Reagendamiento:</span>', unsafe_allow_html=True)
+        _rea_vars = ["{NOMBRE_PACIENTE}", "{NUEVA_FECHA}", "{HORA_NUEVA_FECHA}",
+                     "{NOM_PROF_REASIG}", "{MOTIVO_CONSULTA_REA}",
+                     "{CONFIRMA_HORA}", "{CONFIRMA_REAGEN}"]
+        st.markdown('<div class="tpl-chips">' +
+                    ''.join(f'<span class="tpl-chip">{v}</span>' for v in _rea_vars) +
+                    '</div>', unsafe_allow_html=True)
+
+        # --- Insertar variable (selectbox + boton) ---
+        _var_sel = st.selectbox("Insertar variable:", _vars_all, key="tpl_var_selector",
+                                help="Selecciona y haz clic en Insertar para agregar la variable al texto.")
+        _ci1, _ci2 = st.columns(2)
+        if _ci1.button("Insertar en Recordatorio", key="btn_ins_agend", use_container_width=True):
+            _cur = st.session_state.get("tpl_agend_edit", "")
+            st.session_state["tpl_agend_edit"] = (_cur + " " + _var_sel).strip()
+            st.rerun()
+        if _ci2.button("Insertar en Reagendamiento", key="btn_ins_reagend", use_container_width=True):
+            _cur = st.session_state.get("tpl_reagend_edit", "")
+            st.session_state["tpl_reagend_edit"] = (_cur + " " + _var_sel).strip()
+            st.rerun()
+
+        st.markdown('<hr class="tpl-sep">', unsafe_allow_html=True)
+
+        # --- Editor Recordatorio + preview ---
+        st.markdown("**Recordatorio de hora**")
+        _nuevo_agend = st.text_area(
+            "Plantilla Recordatorio",
+            value=st.session_state.get("tpl_agend_edit", _msg_agend_edit),
+            height=180, key="tpl_agend_edit", label_visibility="collapsed",
+            help="Edita el texto libre. Las variables {VARIABLE} se reemplazan con datos reales al enviar."
+        )
+        _pv_agend = _nuevo_agend
+        for _vv in _vars_all:
+            _pv_agend = _pv_agend.replace(_vv, f'<span class="tpl-pill">{_vv}</span>')
+        st.markdown('<span class="tpl-label">Vista previa (variables como tarjetas):</span>', unsafe_allow_html=True)
+        st.markdown(f'<div class="tpl-preview">{_pv_agend}</div>', unsafe_allow_html=True)
+
+        st.markdown('<hr class="tpl-sep">', unsafe_allow_html=True)
+
+        # --- Editor Reagendamiento + preview ---
+        st.markdown("**Reagendamiento de hora**")
+        _nuevo_reagend = st.text_area(
+            "Plantilla Reagendamiento",
+            value=st.session_state.get("tpl_reagend_edit", _msg_reagend_edit),
+            height=180, key="tpl_reagend_edit", label_visibility="collapsed",
+            help="Edita el texto libre. Las variables {VARIABLE} se reemplazan con datos reales al enviar."
+        )
+        _pv_reagend = _nuevo_reagend
+        for _vv in _vars_all:
+            _pv_reagend = _pv_reagend.replace(_vv, f'<span class="tpl-pill">{_vv}</span>')
+        st.markdown('<span class="tpl-label">Vista previa del mensaje:</span>', unsafe_allow_html=True)
+        st.markdown(f'<div class="tpl-preview">{_pv_reagend}</div>', unsafe_allow_html=True)
+
+        st.markdown('<hr class="tpl-sep">', unsafe_allow_html=True)
+
+        # --- Botones Guardar / Restaurar ---
+        _cb1, _cb2 = st.columns(2)
+        if _cb1.button("Guardar plantillas", key="btn_save_templates", use_container_width=True):
+            _ok_l1 = _nuevo_agend.count("{") == _nuevo_agend.count("}")
+            _ok_l2 = _nuevo_reagend.count("{") == _nuevo_reagend.count("}")
+            if not (_ok_l1 and _ok_l2):
                 st.error("Llaves { } desbalanceadas. Revisa las plantillas antes de guardar.")
             else:
                 _ok_g, _msg_g = _guardar_plantillas_en_admin(_acc_id_tpl, _nuevo_agend, _nuevo_reagend)
@@ -1955,14 +2049,19 @@ with st.sidebar:
                     st.success(_msg_g)
                 else:
                     st.error(_msg_g)
-        if _c2.button("Restaurar mensaje por defecto", key="btn_reset_templates", use_container_width=True):
+        if _cb2.button("Restaurar mensaje por defecto", key="btn_reset_templates", use_container_width=True):
             _ok_r, _msg_r = _guardar_plantillas_en_admin(_acc_id_tpl, "", "")
             if _ok_r:
                 CUSTOM_TEMPLATES["MSG_AGEND"] = ""
                 CUSTOM_TEMPLATES["MSG_REAGEND"] = ""
+                st.session_state["tpl_agend_edit"] = ""
+                st.session_state["tpl_reagend_edit"] = ""
                 st.success("Plantillas restauradas al mensaje por defecto del sistema.")
+                st.rerun()
             else:
                 st.error(_msg_r)
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # Initialize session state for logout confirmation
     if "confirm_logout" not in st.session_state:
