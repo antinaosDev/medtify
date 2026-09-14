@@ -14,6 +14,7 @@ import ast # NECESARIO PARA LEER LISTAS DESDE EXCEL
 import html
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 # Configurar logging para evitar BrokenPipeError durante reruns de Streamlit
 logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
@@ -610,6 +611,54 @@ def _cached_get_messages(evo_url, evo_key, evo_inst, numero, limite=20):
         return cli.get_messages(numero, limite=limite)
     except Exception:
         return []
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _bandeja_previews(evo_url, evo_key, evo_inst, fingerprint, telefonos):
+    """Busca en paralelo el último mensaje del paciente para chats donde el
+    último mensaje es del bot. Devuelve {telefono: body}. fingerprint invalida
+    el cache cuando cambia la bandeja."""
+    cli = _evo_chat_client(evo_url, evo_key, evo_inst, False)
+    if cli is None or not telefonos:
+        return {}
+    results = {}
+
+    def _work(tel):
+        try:
+            msgs = cli.get_messages(tel, limite=20)
+            for m in reversed(msgs):
+                if not m.get("fromMe", True) and m.get("body"):
+                    return tel, m["body"]
+        except Exception:
+            pass
+        return tel, None
+
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        for tel, body in ex.map(_work, telefonos):
+            if body:
+                results[tel] = body
+    return results
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_notificador_info(evo_url, evo_key, evo_inst):
+    """Nombre de perfil y número de la cuenta de WhatsApp que notifica.
+
+    Devuelve 'NombrePerfil (número)' o solo 'número' si el perfil viene
+    vacío. Devuelve '' si la llamada falla (nunca bloquea el envío).
+    """
+    try:
+        cli = _evo_chat_cached(evo_url, evo_key, evo_inst, False)
+        if cli is None:
+            return ""
+        det = cli.get_instance_details()
+        phone = str(det.get("phone", "") or "").strip()
+        prof = str(det.get("profile_name", "") or "").strip()
+        if prof:
+            return f"{prof} ({phone})" if phone else prof
+        return phone
+    except Exception:
+        return ""
 
 
 def get_data_fresh(account_id, worksheet_name=None, worksheet_index=0):
@@ -2792,6 +2841,16 @@ elif menu_option == "Centro de Notificaciones":
                 TEMPLATE_REFRESH_INTERVAL = 20
                 template_refresh_counter = 0
                 update_terminal(f'<span class="log-info">[TEMPLATE] Templates cargados desde Google Sheets. Se refrescarán cada {TEMPLATE_REFRESH_INTERVAL} pacientes.</span>')
+                id_notif_1 = _cached_notificador_info(
+                    st.session_state.get("evo_api_url", EVO_API_URL_CODE),
+                    st.session_state.get("evo_api_key", EVO_API_KEY_CODE),
+                    st.session_state.get("evo_instance", EVO_INSTANCE_CODE),
+                )
+                id_notif_2 = _cached_notificador_info(
+                    st.session_state.get("evo_api_url", EVO_API_URL_CODE),
+                    st.session_state.get("evo_api_key", EVO_API_KEY_CODE),
+                    st.session_state.get("evo_instance", EVO_INSTANCE_CODE),
+                )
                 for idx, row in df_proc.iterrows():
                     # 1. LÓGICA DE DESCANSO LARGO (FRENO DE EMERGENCIA)
                     if mensajes_enviados_racha >= random.randint(5, 9):
@@ -2871,6 +2930,7 @@ elif menu_option == "Centro de Notificaciones":
                                     try:
                                         sheet_conn.update_cell(fila, 22, "NOTIFICADO OK") # ESTADO_REA
                                         sheet_conn.update_cell(fila, 23, ahora)            # FECHA_NOTIF_2
+                                        sheet_conn.update_cell(fila, 31, id_notif_2)
                                         sheet_conn.update_cell(fila, 24, "WHATSAPP")       # METODO_REA
                                     except: pass
                                     update_terminal(f'<span class="log-success">[SENT] Reagendamiento enviado a {nombre}')
@@ -2878,6 +2938,7 @@ elif menu_option == "Centro de Notificaciones":
                                     try:
                                         sheet_conn.update_cell(fila, 22, "ERROR")            
                                         sheet_conn.update_cell(fila, 23, ahora)
+                                        sheet_conn.update_cell(fila, 31, id_notif_2)
                                         sheet_conn.update_cell(fila, 24, "WHATSAPP")
                                     except: pass
                                     update_terminal(f'<span class="log-error">[ERR] Fallo envío a {nombre}: {log}')
@@ -2915,6 +2976,7 @@ elif menu_option == "Centro de Notificaciones":
                                     try:
                                         sheet_conn.update_cell(fila, 12, "NOTIFICADO OK") # ESTADO
                                         sheet_conn.update_cell(fila, 13, ahora)           # FECHA_NOTIF_1
+                                        sheet_conn.update_cell(fila, 30, id_notif_1)
                                         sheet_conn.update_cell(fila, 14, "WHATSAPP")      # METODO
                                     except: pass
                                     update_terminal(f'<span class="log-success">[SENT] Recordatorio enviado a {nombre}')
@@ -2922,6 +2984,7 @@ elif menu_option == "Centro de Notificaciones":
                                     try:
                                         sheet_conn.update_cell(fila, 12, "ERROR")          
                                         sheet_conn.update_cell(fila, 13, ahora)
+                                        sheet_conn.update_cell(fila, 30, id_notif_1)
                                         sheet_conn.update_cell(fila, 14, "WHATSAPP")
                                     except: pass
                                     update_terminal(f'<span class="log-error">[ERR] Fallo envío a {nombre}: {log}')
@@ -3072,6 +3135,7 @@ elif menu_option == "Centro de Notificaciones":
                                     try:
                                         sheet_conn.update_cell(fila, 22, "NOTIFICADO OK") # ESTADO_REA
                                         sheet_conn.update_cell(fila, 23, ahora)            # FECHA_NOTIF_2
+                                        sheet_conn.update_cell(fila, 31, id_notif_2)
                                         sheet_conn.update_cell(fila, 24, "WHATSAPP")       # METODO_REA
                                     except: pass
                                     update_terminal(f'<span class="log-success">[SENT] Reagendamiento enviado a {nombre}')
@@ -3079,6 +3143,7 @@ elif menu_option == "Centro de Notificaciones":
                                     try:
                                         sheet_conn.update_cell(fila, 22, "ERROR")            
                                         sheet_conn.update_cell(fila, 23, ahora)
+                                        sheet_conn.update_cell(fila, 31, id_notif_2)
                                         sheet_conn.update_cell(fila, 24, "WHATSAPP")
                                     except: pass
                                     update_terminal(f'<span class="log-error">[ERR] Fallo envío a {nombre}: {log}')
@@ -3115,6 +3180,7 @@ elif menu_option == "Centro de Notificaciones":
                                     try:
                                         sheet_conn.update_cell(fila, 12, "NOTIFICADO OK") # ESTADO
                                         sheet_conn.update_cell(fila, 13, ahora)           # FECHA_NOTIF_1
+                                        sheet_conn.update_cell(fila, 30, id_notif_1)
                                         sheet_conn.update_cell(fila, 14, "WHATSAPP")      # METODO
                                     except: pass
                                     update_terminal(f'<span class="log-success">[SENT] Recordatorio enviado a {nombre}')
@@ -3122,6 +3188,7 @@ elif menu_option == "Centro de Notificaciones":
                                     try:
                                         sheet_conn.update_cell(fila, 12, "ERROR")          
                                         sheet_conn.update_cell(fila, 13, ahora)
+                                        sheet_conn.update_cell(fila, 30, id_notif_1)
                                         sheet_conn.update_cell(fila, 14, "WHATSAPP")
                                     except: pass
                                     update_terminal(f'<span class="log-error">[ERR] Fallo envío a {nombre}: {log}')
@@ -3741,8 +3808,6 @@ elif menu_option == "Chat con Pacientes":
         with col_refresh:
             if st.button("Refrescar", key="btn_refresh_chat"):
                 st.cache_data.clear()
-                st.cache_data.clear()
-                st.cache_data.clear()
                 st.session_state.chat_selected_jid = None
                 st.rerun()
 
@@ -3789,17 +3854,7 @@ elif menu_option == "Chat con Pacientes":
                                 elif img:
                                     ultimo_texto = "[Imagen]"
 
-                # Si el último mensaje es del bot, buscar la última respuesta del paciente
-                if lm_from_me and ultimo_texto:
-                    try:
-                        msgs = _cached_get_messages(evo_url_chat, evo_key_chat, evo_inst_chat, 
-                                                     info["telefono"], limite=5)
-                        for m in reversed(msgs):
-                            if not m.get("fromMe", True) and m.get("body"):
-                                ultimo_texto = m["body"]
-                                break
-                    except Exception:
-                        pass
+                # Marcar si hace falta buscar el último mensaje del paciente (paralelo después)
                 chats_pacientes.append({
                     "jid": jid,
                     "nombre": info["nombre"] or chat.get("pushName", "") or jid.split("@")[0],
@@ -3812,7 +3867,8 @@ elif menu_option == "Chat con Pacientes":
                     "last_msg": ultimo_texto,
                     "ultima_hora": formatear_hora_mensaje(
                         chat.get("t") or chat.get("lastMessageTimestamp") or 0
-                    )
+                    ),
+                    "_preview_name": info["telefono"] if (lm_from_me and ultimo_texto) else None,
                 })
 
         # --- Ordenar: por último mensaje recibido (más reciente primero) ---
@@ -3846,6 +3902,20 @@ elif menu_option == "Chat con Pacientes":
                 else:
                     st.caption("Índice de pacientes vacío: revisa que df_base_chat tenga TELEFONO válidos.")
 
+        # --- Enriquecer previews en paralelo (último mensaje del paciente) ---
+        _need = [c for c in chats_pacientes if c.get("_preview_name")]
+        if _need:
+            _need = _need[:60]
+            _fp = tuple(sorted((c["jid"], c.get("ts_chat", 0)) for c in _need))
+            _tels = tuple(c["_preview_name"] for c in _need)
+            _previews = _bandeja_previews(evo_url_chat, evo_key_chat, evo_inst_chat, _fp, _tels)
+            for c in _need:
+                _b = _previews.get(c["_preview_name"])
+                if _b:
+                    c["last_msg"] = _b
+        for c in chats_pacientes:
+            c.pop("_preview_name", None)
+
         # --- Layout: Bandeja izquierda + Conversacion derecha ---
         _avatar_grads = [
             "linear-gradient(135deg,#16a34a,#059669)",
@@ -3864,7 +3934,12 @@ elif menu_option == "Chat con Pacientes":
             if not chats_pacientes:
                 st.info("No hay conversaciones activas con pacientes de la base.")
             else:
-                for _i, chat_info in enumerate(chats_pacientes):
+                _render_list = chats_pacientes[:50]
+                if len(chats_pacientes) > 50 and st.checkbox(
+                    f"Mostrar todos ({len(chats_pacientes)} conversaciones)", key="chat_show_all"
+                ):
+                    _render_list = chats_pacientes
+                for _i, chat_info in enumerate(_render_list):
                     jid = chat_info["jid"]
                     nombre = chat_info["nombre"] or "Sin nombre"
                     unread = chat_info["unread"]
@@ -3997,7 +4072,6 @@ elif menu_option == "Chat con Pacientes":
                     if ok:
                         st.success("Mensaje enviado ✅")
                         # Limpiar cache de mensajes + lista de chats para refrescar
-                        st.cache_data.clear()
                         st.cache_data.clear()
                         if "chat_msg_input" in st.session_state:
                             del st.session_state["chat_msg_input"]
