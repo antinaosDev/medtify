@@ -391,6 +391,13 @@ class EvolutionClient:
                 key = msg.get("key", {}) or {}
                 if key.get("fromMe"):
                     continue
+                # FIX (2026-09-14): Evolution API v2 puede ignorar el filtro `where`
+                # del servidor. Verificamos en cliente que el mensaje pertenezca al chat
+                # de este paciente, para no leer mensajes de OTROS chats.
+                rj = str(key.get("remoteJid") or "")
+                rja = str(key.get("remoteJidAlt") or "")
+                if jid_sw not in rj and jid_sw not in rja:
+                    continue
                 message_data = msg.get("message", {}) or {}
 
                 body = ""
@@ -504,6 +511,12 @@ class EvolutionClient:
             result = []
             for msg in records:
                 key = msg.get("key", {}) or {}
+                # FIX (2026-09-14): verificar JID en cliente (mismo motivo que
+                # get_last_incoming_message): evitar mezclar mensajes de otros chats.
+                rj = str(key.get("remoteJid") or "")
+                rja = str(key.get("remoteJidAlt") or "")
+                if jid_sw not in rj and jid_sw not in rja:
+                    continue
                 message_data = msg.get("message", {}) or {}
                 from_me = key.get("fromMe", False)
 

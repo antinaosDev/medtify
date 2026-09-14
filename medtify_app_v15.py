@@ -6,12 +6,9 @@ import streamlit as st
 import pyperclip
 import altair as alt  # Librería de gráficos de alto rendimiento
 from datetime import datetime, timedelta
-from groq import Groq # Importamos la librería de IA
 import requests # Para llamadas API robustas
 import re # IMPORTANTE: Para limpiar las etiquetas 
 import json # NECESARIO: Para leer las credenciales y el contador JSON
-import tempfile # NECESARIO PARA EL PDF
-from fpdf import FPDF # NECESARIO PARA EL PDF
 import ast # NECESARIO PARA LEER LISTAS DESDE EXCEL
 import html
 import logging
@@ -312,7 +309,7 @@ def load_app_configuration(account_id):
     import sys
     config = {
         'valido': False, 'mensaje': '', 'datos': {}, 'credenciales_finales': None, 
-        'licencia': {}, 'uso_ia_actual': 0, 'row_index': -1, 'rol': '', 'templates': {}, 
+        'licencia': {}, 'row_index': -1, 'rol': '', 'templates': {}, 
         'imagenes': {'LOGO_ALAIN': None, 'LOGO_NOTI': None},
         'keywords': {'SI': DEFAULT_RESPUESTAS_SI, 'NO': DEFAULT_RESPUESTAS_NO} # Inicializamos con defaults
     }
@@ -366,38 +363,16 @@ def load_app_configuration(account_id):
 
         config['row_index'] = row_idx
         estado_app = str(target_row.get('ESTADO_APP', 'INACTIVO')).upper().strip()
-        estado_ia = str(target_row.get('ESTADO_IA', 'GRATIS')).upper().strip()
-        
-        try: limite_gratis_conf = int(target_row.get('LIMITE_GRATIS', 2))
-        except: limite_gratis_conf = 2
-        try: limite_pro_conf = int(target_row.get('LIMITE_PRO', 5))
-        except: limite_pro_conf = 5
-        
-        limite = limite_pro_conf if estado_ia == 'PRO' else limite_gratis_conf
         activo = True if estado_app == 'ACTIVO' else False
-        config['licencia'] = {'activo': activo, 'plan': estado_ia, 'limite': limite}
+        config['licencia'] = {'activo': activo}
 
         if not activo:
             config['mensaje'] = "La cuenta está inactiva."
             return config
 
-        usos_raw = target_row.get('USOS_IA', '')
-        hoy_str = datetime.now().strftime("%d/%m/%Y")
-        contador_calculado = 0
-        try:
-            if isinstance(usos_raw, str) and "{" in usos_raw:
-                datos_uso = json.loads(usos_raw)
-                if datos_uso.get('fecha') == hoy_str:
-                    contador_calculado = int(datos_uso.get('contador', 0))
-            else: contador_calculado = 0
-        except: contador_calculado = 0
-        config['uso_ia_actual'] = contador_calculado
-
         config['templates']['MSG_AGEND'] = str(target_row.get('MENSAJE_AGEND', '')).strip()
         config['templates']['MSG_REAGEND'] = str(target_row.get('MENSAJE_REAGEND', '')).strip()
-        config['templates']['PROMPT'] = str(target_row.get('PROMPT', '')).strip()
-        
-        config['datos']['GROQ_API_KEY'] = str(target_row.get('GROQ_API_KEY', '')).strip()
+
         config['datos']['URL_SHEET'] = str(target_row.get('URL_SHEET', '')).strip()
         
         # === LECTURA DE URL DEMOGRÁFICA ===
@@ -456,19 +431,6 @@ def load_app_configuration(account_id):
         
     return config
 
-def registrar_consumo_ia(row_index, nuevo_contador):
-    """Actualiza el contador de uso de IA en la hoja Admin."""
-    try:
-        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(BOOTSTRAP_CREDS, scopes=scope)
-        client = gspread.authorize(creds)
-        sheet_admin = client.open_by_url(URL_ADMIN_MASTER).sheet1
-        hoy_str = datetime.now().strftime("%d/%m/%Y")
-        json_data = json.dumps({"fecha": hoy_str, "contador": nuevo_contador})
-        sheet_admin.update_cell(row_index, 8, json_data) 
-        return True
-    except Exception as e:
-        return False
 
 LISTA_PROFESIONES = sorted([
     "ASISTENTE SOCIAL", "EDUCADORA", "ENFERMERA(O)", "FONOAUDIOLOGO", "KINESIOLOGO",
@@ -1022,172 +984,6 @@ def calcular_dias(fecha_texto):
     except: return -999
 
 
-# === FUNCIÓN PARA LLAMADA A IA (GROQ) CON PROMPT DINÁMICO DESDE SHEETS ===
-# === FUNCIÓN PARA LLAMADA A IA (GROQ) ACTUALIZADA ===
-def generar_analisis_clinico(df):
-    try:
-        client = Groq(api_key=GROQ_API_KEY)
-        
-        # --- 1. CÁLCULO DE VARIABLES ESTADÍSTICAS ---
-        fecha_hoy = datetime.now().strftime("%d/%m/%Y")
-        total_pacientes = len(df)
-        
-        # Demografía
-        avg_edad = round(df['EDAD_NUM'].mean(), 1) if 'EDAD_NUM' in df.columns else 0
-        pacientes_adulto_mayor = len(df[df['EDAD_NUM'] >= 65]) if 'EDAD_NUM' in df.columns else 0
-        dist_genero = df['GENERO'].value_counts().head(3).to_dict() if 'GENERO' in df.columns else {}
-        
-        # Percapita
-        no_inscritos_cnt = 0
-        dist_sector = {}
-        if 'ESTADO_PERCAPITA' in df.columns:
-            no_inscritos_cnt = len(df[df['ESTADO_PERCAPITA'] == "PENDIENTE INSCRIPCION"])
-        if 'SECTOR' in df.columns:
-            dist_sector = df['SECTOR'].value_counts().head(3).to_dict()
-
-        # Operativa
-        notificados = len(df[df['ESTADO'].str.contains('OK', na=False)])
-        confirmados = len(df[df['STATUS_CONFIRMACION'].str.contains('CONFIRMADO')])
-        cancelados = len(df[df['STATUS_CONFIRMACION'].str.contains('NO ASISTIRA')]) 
-        pendientes_respuesta = notificados - confirmados - cancelados
-        
-        # Tasa de Conversión
-        tasa_conf = int((confirmados / notificados) * 100) if notificados > 0 else 0
-        tasa_incertidumbre = round((pendientes_respuesta/total_pacientes)*100, 1) if total_pacientes > 0 else 0
-
-        # Cupos Recuperables
-        cupos_recuperables = 0
-        if 'DIAS_RESTANTES' in df.columns:
-            cupos_recuperables = len(df[
-                (df['STATUS_CONFIRMACION'].str.contains('NO ASISTIRA')) & 
-                (df['DIAS_RESTANTES'] > 0)
-            ])
-
-        # Gestión de Demanda
-        top_prof_orig = df['PROFESION'].value_counts().head(3).to_dict()
-        reasig_pendientes = len(df[(df['CAMBIO_DE_HORA'] == 'SI') & (df['ESTADO_REA'] == '')])
-        errores_notif = len(df[df['ESTADO'].str.contains('ERROR', na=False)])
-        
-        # Recurrencia
-        ruts_unicos = df['RUT'].nunique() if 'RUT' in df.columns else 0
-        recurrencia = total_pacientes - ruts_unicos
-
-        # --- CÁLCULO DE VARIABLES COMPLEJAS ---
-        top_motivos = df['MOTIVO_CONSULTA'].value_counts().head(4).to_dict() if 'MOTIVO_CONSULTA' in df.columns else 'Sin Info'
-        
-        hora_peak = 'N/A'
-        if 'HORA_AGENDADA' in df.columns and not df.empty:
-            mode_vals = df['HORA_AGENDADA'].mode()
-            if not mode_vals.empty:
-                hora_peak = str(mode_vals.iloc[0])
-            
-        dia_critico = 'N/A'
-        if 'FECHA_AGENDADA' in df.columns and not df.empty:
-            mode_vals = df['FECHA_AGENDADA'].mode()
-            if not mode_vals.empty:
-                dia_critico = str(mode_vals.iloc[0])
-
-        cnt_reagendamientos = len(df[df['CAMBIO_DE_HORA']=='SI']) if 'CAMBIO_DE_HORA' in df.columns else 0
-
-        # === NUEVO BLOQUE: CÁLCULO DE POLICONSULTANTES (CRÍTICO PARA TU PROMPT) ===
-        cnt_policonsultantes = 0
-        detalle_policonsultantes = "Sin casos complejos detectados"
-        
-        try:
-            if 'RUT' in df.columns and 'MOTIVO_CONSULTA' in df.columns:
-                # Copia temporal para no afectar el DF principal
-                df_temp = df.copy()
-                df_temp['MOTIVO_NORM_IA'] = df_temp['MOTIVO_CONSULTA'].astype(str).str.strip().str.upper()
-                
-                # Agrupar por RUT y contar motivos únicos
-                poli_stats = df_temp.groupby('RUT')['MOTIVO_NORM_IA'].nunique()
-                
-                # Filtrar quienes tienen 2 o más motivos distintos
-                polis_reales = poli_stats[poli_stats >= 2]
-                cnt_policonsultantes = len(polis_reales)
-                
-                # Generar el resumen de texto para la IA
-                if cnt_policonsultantes > 0:
-                    ejemplos = []
-                    # Tomamos solo los primeros 3 para no saturar a la IA
-                    for rut_val in polis_reales.index[:3]:
-                        mots = df_temp[df_temp['RUT'] == rut_val]['MOTIVO_NORM_IA'].unique()
-                        mots_str = ", ".join(mots[:2]) # Max 2 motivos por ejemplo
-                        ejemplos.append(f"(RUT {rut_val}: {mots_str})")
-                    
-                    detalle_policonsultantes = " | ".join(ejemplos)
-                    if cnt_policonsultantes > 3:
-                        detalle_policonsultantes += f" y {cnt_policonsultantes - 3} casos más."
-        except Exception as e:
-            print(f"Error calculando polis para IA: {e}")
-            pass
-        # =========================================================================
-
-        # --- 2. CARGA Y LIMPIEZA DEL PROMPT ---
-        prompt_template = APP_CONFIG['templates'].get('PROMPT', '').strip()
-
-        if not prompt_template:
-            prompt_template = "Analiza los datos: Confirmados {confirmados}, Tasa {tasa_conf}%."
-
-        # Reemplazos de seguridad por si quedaron fórmulas viejas en el Excel
-        prompt_final = prompt_template
-        prompt_final = prompt_final.replace("{df['MOTIVO_CONSULTA'].value_counts().head(4).to_dict() if 'MOTIVO_CONSULTA' in df.columns else 'Datos no disponibles'}", "{top_motivos}")
-        prompt_final = prompt_final.replace("{df['HORA_AGENDADA'].mode()[0] if 'HORA_AGENDADA' in df.columns and not df.empty else 'N/A'}", "{hora_peak}")
-        prompt_final = prompt_final.replace("{df['FECHA_AGENDADA'].mode()[0] if 'FECHA_AGENDADA' in df.columns and not df.empty else 'N/A'}", "{dia_critico}")
-        prompt_final = prompt_final.replace("{len(df[df['CAMBIO_DE_HORA']=='SI']) if 'CAMBIO_DE_HORA' in df.columns else 0}", "{cnt_reagendamientos}")
-        prompt_final = prompt_final.replace("{round((pendientes_respuesta/total_pacientes)*100, 1) if total_pacientes > 0 else 0}", "{tasa_incertidumbre}")
-
-        # Diccionario con TODOS los datos calculados
-        datos_para_prompt = {
-            "fecha_hoy": fecha_hoy,
-            "avg_edad": avg_edad,
-            "pacientes_adulto_mayor": pacientes_adulto_mayor,
-            "dist_genero": dist_genero,
-            "dist_sector": dist_sector,
-            "no_inscritos_cnt": no_inscritos_cnt,
-            "total_pacientes": total_pacientes,
-            "tasa_conf": tasa_conf,
-            "confirmados": confirmados,
-            "cancelados": cancelados,
-            "errores_notif": errores_notif,
-            "top_prof_orig": top_prof_orig,
-            "cupos_recuperables": cupos_recuperables,
-            "reasig_pendientes": reasig_pendientes,
-            "pendientes_respuesta": pendientes_respuesta,
-            "recurrencia": recurrencia,
-            # Variables Limpias
-            "top_motivos": top_motivos,
-            "hora_peak": hora_peak,
-            "dia_critico": dia_critico,
-            "cnt_reagendamientos": cnt_reagendamientos,
-            "tasa_incertidumbre": tasa_incertidumbre,
-            # === NUEVAS VARIABLES AGREGADAS PARA CORREGIR EL ERROR ===
-            "cnt_policonsultantes": cnt_policonsultantes,
-            "detalle_policonsultantes": detalle_policonsultantes
-        }
-
-        # --- 4. INYECCIÓN ---
-        try:
-            prompt_listo = prompt_final.format(**datos_para_prompt)
-        except KeyError as e:
-            return f"⚠️ Error en tu Prompt de Sheets: Variable no reconocida {e}. Revisa las llaves."
-        except Exception as e:
-            return f"⚠️ Error formateando: {str(e)}"
-
-        # --- 5. LLAMADA A LA IA ---
-        completion = client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[{"role": "user", "content": prompt_listo}],
-            temperature=0.3,
-            max_tokens=1500
-        )
-        
-        content = completion.choices[0].message.content
-        content_clean = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
-        return content_clean
-
-    except Exception as e:
-        return f"⚠️ Error crítico IA: {str(e)}"
 
 # === MODIFICADA: VERSIÓN HUMANIZADA (ANTI-BAN) ===
 def enviar_mensaje_wsp(client, numero, mensaje):
@@ -1376,206 +1172,6 @@ def format_whatsapp_phone(numero):
     if num_clean.startswith('56') and len(num_clean) == 10:
         return f"+{num_clean}"
     return None
-# === CLASE AVANZADA PARA GENERAR PDF (DISEÑO INSTITUCIONAL ALTO CONTRASTE) ===
-class PDFReport(FPDF):
-    def __init__(self, logo_alain_data, logo_noti_data):
-        super().__init__()
-        self.logo_alain_data = logo_alain_data
-        self.logo_noti_data = logo_noti_data
-    
-    def header(self):
-        # FONDO BLANCO EN CABECERA PARA MAXIMO CONTRASTE CON LOGOS
-        self.set_fill_color(255, 255, 255) 
-        self.rect(0, 0, 210, 40, 'F')
-        
-        # Logos (Guardar temporalmente si son bytes)
-        if self.logo_noti_data:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
-                f.write(self.logo_noti_data)
-                logo_path = f.name
-            try: self.image(logo_path, 10, 5, 25)
-            except: pass
-            
-        if self.logo_alain_data:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as f:
-                f.write(self.logo_alain_data)
-                logo_path_2 = f.name
-            try: self.image(logo_path_2, 175, 5, 25)
-            except: pass
-
-        # Títulos alineados
-        self.set_y(10)
-        self.set_font('Arial', 'B', 18)
-        self.set_text_color(0, 109, 182) # Azul Medio (#006DB6)
-        self.cell(0, 8, 'CESFAM CHOLCHOL', 0, 1, 'C')
-        
-        self.set_font('Arial', '', 12)
-        self.set_text_color(15, 37, 87) # Azul Marino (#0F2557)
-        self.cell(0, 6, 'REPORTE EJECUTIVO DE GESTIÓN CLÍNICA', 0, 1, 'C')
-        
-        # Fecha en Español manual
-        hoy = datetime.now()
-        fecha_str = f"{hoy.day} de {MESES_ES[hoy.month]} del {hoy.year} - {hoy.strftime('%H:%M')}"
-        
-        self.set_font('Arial', 'I', 9)
-        self.set_text_color(100, 100, 100)
-        self.cell(0, 5, f'Fecha de Emisión: {fecha_str}', 0, 1, 'C')
-        
-        # Línea divisoria decorativa
-        self.set_draw_color(136, 197, 67) # Verde Lima (#88C543)
-        self.set_line_width(0.8)
-        self.line(10, 38, 200, 38)
-        self.ln(15)
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.set_text_color(128, 128, 128)
-        self.cell(0, 10, f'Elaborado por el desarrollador: Alain Antinao Sepúlveda | Página {self.page_no()}', 0, 0, 'C')
-
-    def chapter_title(self, label):
-        self.set_font('Arial', 'B', 14)
-        # Azul Marino Institucional (#0F2557)
-        self.set_text_color(15, 37, 87)
-        self.cell(0, 10, label, 0, 1, 'L')
-        self.set_draw_color(0, 109, 182) # Línea Azul
-        self.set_line_width(0.5)
-        self.line(10, self.get_y(), 200, self.get_y())
-        self.ln(5)
-
-    def kpi_table_row(self, label, value, is_header=False):
-        self.set_font('Arial', 'B' if is_header else '', 10)
-        self.set_text_color(50, 50, 50)
-        fill = 1 if is_header else 0
-        if is_header:
-             self.set_fill_color(240, 245, 250) # Gris azulado
-             self.set_text_color(15, 37, 87)
-        else:
-             self.set_text_color(50, 50, 50)
-             
-        self.cell(100, 8, label, 1, 0, 'L', fill)
-        self.cell(90, 8, str(value), 1, 1, 'C', fill)
-        self.ln()
-
-def generate_pdf_report(df, stats, ai_analysis, logos):
-    pdf = PDFReport(logos['LOGO_ALAIN'], logos['LOGO_NOTI'])
-    pdf.alias_nb_pages()
-    pdf.add_page()
-    
-    # 1. Resumen Mensual Actual
-    pdf.chapter_title("1. Rendimiento Mes Actual")
-    pdf.kpi_table_row("Total Pacientes (Mes)", str(stats['total_mes']), True)
-    pdf.kpi_table_row("Confirmados (Mes)", str(stats['confirmados_mes']))
-    pdf.kpi_table_row("Tasa Confirmación (Mes)", f"{stats['tasa_mes']}%")
-    pdf.ln(5)
-
-    # 2. Resumen Global Histórico
-    pdf.chapter_title("2. Totales Históricos (Global)")
-    pdf.kpi_table_row("Total Pacientes (Histórico)", str(stats['total_global']), True)
-    pdf.kpi_table_row("Confirmados (Global)", str(stats['confirmados_global']))
-    pdf.kpi_table_row("Cancelados (Global)", str(stats['rechazados_global']))
-    pdf.kpi_table_row("Tasa Eficiencia Global", f"{stats['tasa_global']}%")
-    pdf.ln(5)
-
-    # 3. Gestión de Disponibilidad
-    pdf.chapter_title("3. Gestion de Cupos y Disponibilidad")
-    
-    # Configuración de fuente para texto normal
-    pdf.set_font('Arial', '', 10)
-    
-    if stats['disponibles'] > 0:
-        pdf.set_text_color(0, 100, 0) # Verde oscuro
-        pdf.set_font('Arial', 'B', 10)
-        texto_cupos = f"ALERTA DE OPORTUNIDAD: Se han detectado {stats['disponibles']} cupos disponibles (pacientes que no asistiran) para fechas futuras. Se recomienda activar lista de espera."
-        # Decodificación segura para tildes básicas
-        pdf.set_x(10)
-        pdf.multi_cell(190, 6, texto_cupos.encode('latin-1', 'replace').decode('latin-1'))
-        pdf.set_text_color(0,0,0)
-    else:
-        pdf.set_font('Arial', '', 10)
-        texto_cupos = "No hay cupos liberados para fechas futuras en este momento. La agenda se mantiene sin cancelaciones anticipadas."
-        pdf.set_x(10)
-        pdf.multi_cell(190, 6, texto_cupos.encode('latin-1', 'replace').decode('latin-1'))
-    pdf.ln(5)
-    
-    # 4. Alerta Percapita
-    pdf.chapter_title("4. Alerta de Financiamiento (Percapita)")
-    if 'no_inscritos' in stats and stats['no_inscritos'] > 0:
-        pdf.set_text_color(180, 0, 0) # Rojo
-        pdf.set_font('Arial', 'B', 10)
-        texto_alerta = f"ALERTA FINANCIERA: Se detectaron {stats['no_inscritos']} pacientes atendidos que figuran como 'PENDIENTE INSCRIPCION' en el ultimo corte percapita disponible."
-        pdf.set_x(10)
-        pdf.multi_cell(190, 6, texto_alerta.encode('latin-1', 'replace').decode('latin-1'))
-        pdf.set_text_color(0,0,0)
-    else:
-        pdf.set_x(10)
-        pdf.multi_cell(190, 6, "Todos los pacientes verificados parecen estar inscritos correctamente en el percapita base.".encode('latin-1', 'replace').decode('latin-1'))
-    pdf.ln(5)
-    
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 8, "Cola de Envio Pendiente:".encode('latin-1', 'replace').decode('latin-1'), 0, 1)
-    pdf.set_font('Arial', '', 10)
-    texto_cola = f"Existen {stats['cola_activa']} mensajes listos para ser enviados."
-    pdf.set_x(10)
-    pdf.multi_cell(190, 6, texto_cola.encode('latin-1', 'replace').decode('latin-1'))
-    pdf.ln(5)
-
-    # 5. Análisis IA
-    pdf.add_page()
-    pdf.chapter_title("5. Analisis Estrategico Inteligente")
-    pdf.set_font('Arial', 'I', 9)
-    pdf.cell(0, 6, "Analisis generado en base a datos en tiempo real.", 0, 1)
-    pdf.ln(5)
-    
-    pdf.set_font('Arial', '', 11) # Fuente un poco más grande para el reporte
-    if ai_analysis:
-        # 1. Limpieza de Markdown que ensucia el PDF
-        clean_text = ai_analysis.replace('**', '').replace('###', '').replace('####', '')
-        
-        # 2. Diccionario de reemplazo manual para asegurar caracteres españoles en PDF standard
-        replacements = {
-            'ñ': chr(241), 'Ñ': chr(209),
-            'á': chr(225), 'é': chr(233), 'í': chr(237), 'ó': chr(243), 'ú': chr(250),
-            'Á': chr(193), 'É': chr(201), 'Í': chr(205), 'Ó': chr(211), 'Ú': chr(218),
-            '“': '"', '”': '"', '–': '-'
-        }
-        
-        for char, replacement in replacements.items():
-            clean_text = clean_text.replace(char, replacement)
-
-        # NUEVO: limpiar tabulaciones y retornos que rompen fpdf2
-        clean_text = clean_text.replace('\t', '    ').replace('\r', '')
-
-        # 3. Imprimir línea por línea para controlar espaciado
-        for line in clean_text.split('\n'):
-            # CORRECCIÓN: Romper palabras o separadores muy largos para evitar FPDFException
-            safe_words = []
-            for word in line.split(' '):
-                if len(word) > 40:
-                    safe_words.extend([word[i:i+40] for i in range(0, len(word), 40)])
-                else:
-                    safe_words.append(word)
-            line = ' '.join(safe_words)
-            
-            # Si la línea es un título (detectado por ser corta y mayúsculas o empezar con número)
-            pdf.set_x(10)
-            if len(line) < 50 and (line.isupper() or line.strip().startswith(('1.', '2.', '3.'))):
-                pdf.ln(3)
-                pdf.set_font('Arial', 'B', 11)
-                pdf.set_x(10)
-                pdf.multi_cell(190, 6, line.encode('latin-1', 'replace').decode('latin-1'))
-                pdf.set_font('Arial', '', 11)
-            else:
-                pdf.multi_cell(190, 6, line.encode('latin-1', 'replace').decode('latin-1'))
-    else:
-        pdf.set_x(10)
-        pdf.multi_cell(190, 6, "No se pudo generar el analisis detallado en este momento.")
-
-    # Output
-    out = pdf.output() if hasattr(pdf, 'fpdf_version') else pdf.output(dest='S')
-    if isinstance(out, (bytes, bytearray)):
-        return bytes(out)
-    return out.encode('latin-1')
 
 # -----------------------------------------------------------------------------
 # 3. INTERFAZ DE USUARIO (FRONTEND) Y LOGIN
@@ -1745,21 +1341,14 @@ if not APP_CONFIG['valido']:
 
 # === VARIABLES GLOBALES ===
 DYNAMIC_CREDS = APP_CONFIG['credenciales_finales']
-GROQ_API_KEY = APP_CONFIG['datos'].get('GROQ_API_KEY', '')
 URL_SHEET = APP_CONFIG['datos'].get('URL_SHEET', '')
 ROW_INDEX_ADMIN = APP_CONFIG['row_index']
 CUSTOM_TEMPLATES = APP_CONFIG['templates']
-AI_MODEL = "llama-3.3-70b-versatile"
 # IMÁGENES (Puede ser Bytes o URL String)
 IMG_LOGO_NOTI = APP_CONFIG['imagenes']['LOGO_NOTI']
 IMG_LOGO_ALAIN = APP_CONFIG['imagenes']['LOGO_ALAIN']
 
 # Sincronizar session_state
-if 'ai_usage' not in st.session_state:
-    st.session_state.ai_usage = APP_CONFIG['uso_ia_actual']
-
-if 'ultimo_reporte_ia' not in st.session_state:
-    st.session_state.ultimo_reporte_ia = None
 
 # --- CSS PROFESIONAL (PALETA INSTITUCIONAL APLICADA) ---
 st.markdown("""
@@ -1855,24 +1444,6 @@ st.markdown("""
 
     .stDataFrame { background: var(--white); border-radius: 12px; padding: 5px; box-shadow: var(--card-shadow); }
     
-    /* Estilo para el reporte de IA */
-    .report-container {
-        background-color: #ffffff;
-        padding: 30px;
-        border-radius: 10px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        margin-top: 20px;
-    }
-    .report-header {
-        border-bottom: 2px solid var(--primary-blue);
-        padding-bottom: 10px;
-        margin-bottom: 20px;
-        color: var(--primary-blue);
-        font-weight: 700;
-        font-size: 1.2rem;
-    }
-    
     /* Footer Adjustment */
     img { margin-bottom: 0px; } 
 
@@ -1908,19 +1479,6 @@ with st.sidebar:
             st.session_state.rol_usuario = ''
             st.rerun()
         
-        limite_diario = status['limite']
-        uso_actual = st.session_state.ai_usage
-        
-        if status['plan'] == 'PRO':
-            st.markdown(f"🌟 **Plan PRO** ({limite_diario} Consultas)")
-        else:
-            st.markdown(f"🌱 **Plan GRATIS** ({limite_diario} Consultas)")
-        
-        st.progress(min(uso_actual / limite_diario, 1.0))
-        st.caption(f"Uso IA Hoy: {uso_actual}/{limite_diario}")
-        
-        if uso_actual >= limite_diario:
-            st.warning("⚠️ Límite diario alcanzado")
             
     else:
         st.error("⛔ Cuenta Suspendida o No Encontrada")
@@ -2367,54 +1925,6 @@ if menu_option == "Dashboard Analytics":
 
     # --- 3. PANELES DE KPI ---
     
-    # BOTÓN EXPORTAR PDF (Ligado a Créditos IA)
-    # LÓGICA: AL PRESIONAR EL BOTÓN, PRIMERO EJECUTA LA IA Y LUEGO GENERA EL PDF
-    if st.button("📄 Exportar Reporte Ejecutivo (PDF)"):
-        if st.session_state.ai_usage >= status['limite']:
-            st.error("🚫 Límite de créditos alcanzado. No se puede generar el análisis IA para el reporte.")
-        else:
-            with st.spinner("📊 Analizando los datos en tiempo real..."):
-                # 1. Ejecutar Análisis IA (Descuenta crédito)
-                ai_result = generar_analisis_clinico(df)
-                
-                # 2. Guardar en sesión (para que no se pierda al recargar)
-                st.session_state.ultimo_reporte_ia = ai_result
-                
-                # 3. Descontar Crédito y Guardar en Nube
-                nuevo_contador = st.session_state.ai_usage + 1
-                st.session_state.ai_usage = nuevo_contador
-                registrar_consumo_ia(ROW_INDEX_ADMIN, nuevo_contador)
-            
-            with st.spinner("📄 Maquetando Reporte PDF Institucional..."):
-                # Calc no inscritos
-                no_inscritos_pdf = 0
-                if 'ESTADO_PERCAPITA' in df.columns:
-                    no_inscritos_pdf = len(df[df['ESTADO_PERCAPITA'] == "PENDIENTE INSCRIPCION"])
-
-                # 4. Preparar estadísticas para el PDF
-                stats_export = { 
-                    'total_global': total_global, 
-                    'confirmados_global': confirmados_global, 
-                    'rechazados_global': rechazados_global, 
-                    'tasa_global': tasa_global,
-                    'total_mes': total_mes,
-                    'confirmados_mes': confirmados_mes,
-                    'tasa_mes': tasa_mes,
-                    'disponibles': total_horas_disponibles,
-                    'no_inscritos': no_inscritos_pdf, # KPI Nuevo
-                    'cola_activa': len(df[(estado_col == '') & (dias_rest_col >= 1) & (dias_rest_col <= 2)]) if safe_has_col(df, 'DIAS_RESTANTES') else 0
-                }
-                
-                # 5. Generar PDF usando la clase PDFReport personalizada
-                pdf_bytes = generate_pdf_report(df, stats_export, ai_result, APP_CONFIG['imagenes'])
-                
-                st.download_button(
-                    label="⬇️ Descargar Reporte PDF Final", 
-                    data=pdf_bytes, 
-                    file_name=f"Reporte_Ejecutivo_{datetime.now().strftime('%Y%m%d')}.pdf", 
-                    mime='application/pdf'
-                )
-                st.success("✅ Reporte generado y crédito descontado exitosamente.")
     
     # BLOQUE DE DISPONIBILIDAD (NUEVO DESTACADO)
     if total_horas_disponibles > 0:
@@ -2497,9 +2007,10 @@ if menu_option == "Dashboard Analytics":
     
     # --- SISTEMA DE PESTAÑAS (ACTUALIZADO) ---
     # Se agrega "🔍 Policonsultantes" al final
-    tab1, tab2, tab_dem, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-        "📉 Respuesta", "📊 Demografía Edad", "🗺️ Territorio & Percápita", "🩺 Carga", "♻️ Gestión Cupos", "⏰ Temporal", "⚠️ Cambios", "🗓️ Calendario", "🧠 IA Analista", "🔍 Policonsultantes"
+    tab1, tab2, tab_dem, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "📉 Respuesta", "📊 Demografía Edad", "🗺️ Territorio & Percápita", "🩺 Carga", "♻️ Gestión Cupos", "⏰ Temporal", "⚠️ Cambios", "🗓️ Calendario", "🔍 Policonsultantes"
     ])
+
     
     # === TAB 1: RESPUESTA PACIENTE (Update con No Asistira) ===
     with tab1:
@@ -2808,77 +2319,9 @@ if menu_option == "Dashboard Analytics":
             else:
                 st.warning("No hay fechas válidas para generar el calendario.")
 
-    # === TAB 8: ANALISTA VIRTUAL ===
-    with tab8:
-        col_ia_1, col_ia_2 = st.columns([1, 2])
-        
-        with col_ia_1:
-            st.markdown("### 🧠 Analista Virtual")
-            limite_max = status['limite']
-            uso_actual = st.session_state.ai_usage
-            
-            st.markdown(f"""
-            <div style="background-color:#F8F9FA; padding:15px; border-radius:10px; border-left: 4px solid #006DB6; font-size:0.9rem;">
-                <strong>Plan Actual:</strong> {status['plan']}<br>
-                <strong>Consultas:</strong> {uso_actual} / {limite_max}
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.write("")
-            st.divider()
-            
-            if uso_actual >= limite_max:
-                st.error(f"🚫 Límite diario alcanzado ({limite_max}).")
-                st.button("✨ Generar Reporte", disabled=True)
-            else:
-                if st.button("✨ Generar Reporte Ejecutivo", type="primary", width="stretch"):
-                    
-                    with col_ia_2:
-                        with st.spinner("🧠 Analizando datos y registrando consumo..."):
-                            # 1. Generar Reporte (Usando Prompt de Excel)
-                            resultado_ia = generar_analisis_clinico(df)
-                            
-                            # 2. Guardar en Memoria para persistencia
-                            st.session_state.ultimo_reporte_ia = resultado_ia
-                            
-                            # 3. Incrementar Contador Local
-                            nuevo_contador = uso_actual + 1
-                            st.session_state.ai_usage = nuevo_contador
-                            
-                            # 4. Guardar Contador en Nube (Col H)
-                            exito_save = registrar_consumo_ia(ROW_INDEX_ADMIN, nuevo_contador)
-                            
-                            if exito_save:
-                                st.toast("Consumo registrado en la nube", icon="✅")
-                            else:
-                                st.warning("Error guardando contador en nube")
-                            
-                            # 5. Recargar para actualizar UI
-                            time.sleep(0.5)
-                            st.rerun()
-        
-        with col_ia_2:
-            # MOSTRAR EL REPORTE (Persistente)
-            if st.session_state.ultimo_reporte_ia:
-                st.markdown(f"""
-                <div class="report-container">
-                    <div class="report-header">
-                        📊 REPORTE GERENCIAL DIARIO | {datetime.now().strftime("%d/%m/%Y")}
-                    </div>
-                    <div style="color: #444; line-height: 1.6;">
-                        {st.session_state.ultimo_reporte_ia}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if st.button("🗑️ Limpiar Pantalla"):
-                    st.session_state.ultimo_reporte_ia = None
-                    st.rerun()
-            else:
-                st.info("👋 Presiona el botón para que la IA analice los datos.")
 
     # === TAB 9: DETECTOR DE POLICONSULTANTES (CRITERIO MULTI-MOTIVO) ===
-    with tab9:
+    with tab8:
         st.markdown("### 🔍 Análisis de Policonsultantes (Multi-Causal)")
         st.markdown("Identifica pacientes que consultan por **distintos motivos clínicos** (ej: Control + Urgencia + Consulta).")
         

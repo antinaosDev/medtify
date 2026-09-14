@@ -10,8 +10,6 @@ altair
 requests
 polars
 pytz
-groq
-fpdf
 pyperclip
 # NOTE: No selenium, no chromedriver needed!
 # Evolution API client is included as evolution_client.py
