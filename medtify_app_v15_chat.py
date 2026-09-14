@@ -6,6 +6,7 @@ import streamlit as st
 import pyperclip
 import altair as alt  # Librería de gráficos de alto rendimiento
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import requests # Para llamadas API robustas
 import re # IMPORTANTE: Para limpiar las etiquetas 
 import json # NECESARIO: Para leer las credenciales y el contador JSON
@@ -976,10 +977,16 @@ def esperar_login_qr(client):
     status = client.check_qr_status()
     return status.get("connected", False)
 
+TZ_CHILE = ZoneInfo("America/Santiago")
+
+def ahora_santiago():
+    """Fecha/hora actual en Chile (formato dd/mm/aaaa hh:mm)."""
+    return datetime.now(TZ_CHILE).strftime("%d/%m/%Y %H:%M")
+
 def calcular_dias(fecha_texto):
     try:
         fecha_cita = datetime.strptime(str(fecha_texto).strip(), "%d/%m/%Y").date()
-        hoy = datetime.now().date()
+        hoy = datetime.now(TZ_CHILE).date()
         return (fecha_cita - hoy).days
     except: return -999
 
@@ -2806,7 +2813,7 @@ elif menu_option == "Centro de Notificaciones":
                         st_rea = str(row.get('ESTADO_REA', '')).strip()
                         st_nor = str(row.get('ESTADO', '')).strip()
                         
-                        ahora = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        ahora = ahora_santiago()
                         accion = False
 
                         # DEBUG: Show row state for each iteration
@@ -2818,7 +2825,7 @@ elif menu_option == "Centro de Notificaciones":
                         dias = -1
                         if not es_cambio:
                             dias = calcular_dias(row['FECHA_AGENDADA'])
-                            dia_semana_hoy = datetime.now().weekday()
+                            dia_semana_hoy = datetime.now(TZ_CHILE).weekday()
                             rango_maximo = 3 if dia_semana_hoy == 4 else 2
                             
                             nuevo_obs = ""
@@ -3047,7 +3054,7 @@ elif menu_option == "Centro de Notificaciones":
                         st_rea = str(row['ESTADO_REA']).strip()
                         st_nor = str(row['ESTADO']).strip()
                         
-                        ahora = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        ahora = ahora_santiago()
                         accion = False
 
                         # === BLOQUE DE ENVÍO REAGENDAMIENTO ===
@@ -3082,7 +3089,7 @@ elif menu_option == "Centro de Notificaciones":
                             dias = calcular_dias(row['FECHA_AGENDADA'])
                             
                             # === LÓGICA DE VIERNES (NOTIFICAR HASTA EL LUNES) ===
-                            dia_semana_hoy = datetime.now().weekday() # 4 es Viernes
+                            dia_semana_hoy = datetime.now(TZ_CHILE).weekday() # 4 es Viernes
                             rango_maximo = 3 if dia_semana_hoy == 4 else 2
                             
                             # Actualización visual en Google Sheets (Column O - Observación)
