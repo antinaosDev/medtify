@@ -3758,10 +3758,15 @@ elif menu_option == "Chat con Pacientes":
             jid = chat.get("remoteJid", "")
             if jid in pacientes_index:
                 info = pacientes_index[jid]
-                # Extraer texto del ultimo mensaje de forma robusta
+                # EXTRAER ÚLTIMO MENSAJE DEL PACIENTE (filtro adicional)
                 lm = chat.get("lastMessage")
                 ultimo_texto = ""
+                lm_from_me = False
+
                 if isinstance(lm, dict):
+                    lm_key = lm.get("key") or {}
+                    lm_from_me = lm_key.get("fromMe", False)
+                    
                     ultimo_texto = lm.get("conversation", "") or ""
                     if not ultimo_texto:
                         m = lm.get("message")
@@ -3776,6 +3781,18 @@ elif menu_option == "Chat con Pacientes":
                                     ultimo_texto = str(img["caption"])
                                 elif img:
                                     ultimo_texto = "[Imagen]"
+
+                # Si el último mensaje es del bot, buscar la última respuesta del paciente
+                if lm_from_me and ultimo_texto:
+                    try:
+                        msgs = _cached_get_messages(evo_url_chat, evo_key_chat, evo_inst_chat, 
+                                                     info["telefono"], limite=5)
+                        for m in reversed(msgs):
+                            if not m.get("fromMe", True) and m.get("body"):
+                                ultimo_texto = m["body"]
+                                break
+                    except Exception:
+                        pass
                 chats_pacientes.append({
                     "jid": jid,
                     "nombre": info["nombre"] or chat.get("pushName", "") or jid.split("@")[0],
