@@ -586,6 +586,9 @@ def _cached_connection_snapshot(evo_url, evo_key, evo_inst, evo_safe=False):
             "message_count": det.get("message_count", 0),
             "contact_count": det.get("contact_count", 0),
             "chat_count": det.get("chat_count", 0),
+            "profile_pic": det.get("profile_pic", ""),
+            "battery_level": qr.get("battery_level", 0),
+            "battery_plugged": qr.get("battery_plugged", False),
         }
     except Exception:
         return {"ok": False}
@@ -1797,7 +1800,15 @@ with st.sidebar:
         snap = _cached_connection_snapshot(evo_url, evo_key, user_instance, evo_safe)
 
         if snap and snap.get("ok") and snap.get("connected"):
-            st.success("✅ WhatsApp Conectado")
+            _pic = snap.get("profile_pic", "")
+            if _pic:
+                col_pic, col_st = st.columns([1, 3])
+                with col_pic:
+                    st.image(_pic, width=70)
+                with col_st:
+                    st.success("✅ WhatsApp Conectado")
+            else:
+                st.success("✅ WhatsApp Conectado")
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("**📱 Número:**")
@@ -1820,6 +1831,11 @@ with st.sidebar:
                 st.metric("Contactos", snap.get("contact_count", 0))
             with stats_col3:
                 st.metric("Chats", snap.get("chat_count", 0))
+
+            _batt = int(snap.get("battery_level", 0) or 0)
+            if _batt:
+                _plug = "🔌 cargando" if snap.get("battery_plugged") else "sin cargar"
+                st.markdown(f"**🔋 Batería:** {_batt}% · {_plug}")
         elif snap and snap.get("ok") and not snap.get("connected"):
             st.warning("⚠️ WhatsApp No Conectado")
             st.info("Escanea el QR para conectar tu cuenta de WhatsApp")

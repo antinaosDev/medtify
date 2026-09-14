@@ -135,11 +135,22 @@ class EvolutionClient:
                 elif "state" in data and isinstance(data["state"], str):
                     state = data["state"]
                 
+                # Batería (formato puede variar entre versiones de Evolution)
+                _raw_inst = data.get("instance") or data.get("state") or {}
+                _raw_batt = _raw_inst.get("battery", {}) if isinstance(_raw_inst, dict) else {}
+                if isinstance(_raw_batt, dict):
+                    _batt_lvl = _raw_batt.get("battery", _raw_batt.get("level", 0))
+                    _batt_plug = bool(_raw_batt.get("plugged", False))
+                else:
+                    _batt_lvl = 0
+                    _batt_plug = False
                 return {
                     "connected": state == "open",
                     "state": state,
                     "qrcode": state == "close",
-                    "raw": data
+                    "battery_level": _batt_lvl,
+                    "battery_plugged": _batt_plug,
+                    "raw": data,
                 }
             return {"connected": False, "state": "error", "qrcode": False}
         except Exception as e:
