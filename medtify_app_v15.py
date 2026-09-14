@@ -619,8 +619,8 @@ def _cached_get_messages(evo_url, evo_key, evo_inst, numero, limite=20):
 @st.cache_data(ttl=20, show_spinner=False)
 def _bandeja_previews(evo_url, evo_key, evo_inst, fingerprint, telefonos):
     """Busca en paralelo el último mensaje del paciente para chats donde el
-    último mensaje es del bot. Devuelve {telefono: body}. fingerprint invalida
-    el cache cuando cambia la bandeja."""
+    último mensaje es del bot. Devuelve {telefono: {"body": str, "ts": int}}.
+    fingerprint invalida el cache cuando cambia la bandeja."""
     cli = _evo_chat_client(evo_url, evo_key, evo_inst, False)
     if cli is None or not telefonos:
         return {}
@@ -628,18 +628,23 @@ def _bandeja_previews(evo_url, evo_key, evo_inst, fingerprint, telefonos):
 
     def _work(tel):
         try:
-            msgs = cli.get_messages(tel, limite=20)
+            msgs = cli.get_messages(tel, limite=30)
             for m in reversed(msgs):
                 if not m.get("fromMe", True) and m.get("body"):
-                    return tel, m["body"]
+                    _ts = m.get("timestamp") or m.get("messageTimestamp") or m.get("t") or 0
+                    try:
+                        _ts = int(_ts)
+                    except Exception:
+                        _ts = 0
+                    return tel, {"body": m["body"], "ts": _ts}
         except Exception:
             pass
         return tel, None
 
     with ThreadPoolExecutor(max_workers=12) as ex:
-        for tel, body in ex.map(_work, telefonos):
-            if body:
-                results[tel] = body
+        for tel, res in ex.map(_work, telefonos):
+            if res:
+                results[tel] = res
     return results
 
 
@@ -3881,8 +3886,10 @@ elif menu_option == "Chat con Pacientes":
                     "unread": chat.get("unreadCount", 0),
                     "ts_chat": chat.get("t") or chat.get("lastMessageTimestamp") or 0,
                     "last_msg": ultimo_texto,
-                    "ultima_hora": formatear_hora_mensaje(
-                        chat.get("t") or chat.get("lastMessageTimestamp") or 0
+                    "ultima_hora": (
+                        formatear_hora_mensaje(chat.get("t") or chat.get("lastMessageTimestamp") or 0)
+                        if (chat.get("t") or chat.get("lastMessageTimestamp"))
+                        else ""
                     ),
                     "_preview_name": info["telefono"] if (lm_from_me and ultimo_texto) else None,
                 })
@@ -3919,17 +3926,32 @@ elif menu_option == "Chat con Pacientes":
                     st.caption("Índice de pacientes vacío: revisa que df_base_chat tenga TELEFONO válidos.")
 
         # --- Enriquecer previews en paralelo (último mensaje del paciente) ---
+        # Regla: la bandeja muestra SOLO chats donde el paciente ha respondido.
         _need = [c for c in chats_pacientes if c.get("_preview_name")]
         if _need:
-            _need = _need[:60]
-            _fp = tuple(sorted((c["jid"], c.get("ts_chat", 0)) for c in _need))
-            _tels = tuple(c["_preview_name"] for c in _need)
+            _procesar = _need[:60]
+            _fp = tuple(sorted((c["jid"], c.get("ts_chat", 0)) for c in _procesar))
+            _tels = tuple(c["_preview_name"] for c in _procesar)
             _previews = _bandeja_previews(evo_url_chat, evo_key_chat, evo_inst_chat, _fp, _tels)
-            for c in _need:
+            for c in _procesar:
                 _b = _previews.get(c["_preview_name"])
-                if _b:
-                    c["last_msg"] = _b
+                if _b and _b.get("body"):
+                    c["last_msg"] = _b["body"]
+                    if _b.get("ts"):
+                        c["ultima_hora"] = formatear_hora_mensaje(_b["ts"])
+                    c["_tiene_respuesta"] = True
+                else:
+                    c["_tiene_respuesta"] = False
+            for c in _need[60:]:
+                c["_tiene_respuesta"] = False
+        # Chats cuyo último mensaje ya es del paciente: sí respondió
         for c in chats_pacientes:
+            if "_tiene_respuesta" not in c:
+                c["_tiene_respuesta"] = True
+        # Excluir los que NO respondieron
+        chats_pacientes = [c for c in chats_pacientes if c.get("_tiene_respuesta")]
+        for c in chats_pacientes:
+            c.pop("_tiene_respuesta", None)
             c.pop("_preview_name", None)
 
         # --- Layout: Bandeja izquierda + Conversacion derecha ---
@@ -3946,7 +3968,8 @@ elif menu_option == "Chat con Pacientes":
         # --- BANDEJA IZQUIERDA ---
         with col_bandeja:
             st.markdown('<div class="ch-seccion-title">💬 Bandeja</div>', unsafe_allow_html=True)
-            st.caption(f"🔒 Solo conversaciones de la instancia {evo_inst_chat} (cuenta actual).")
+            if str(st.session_state.get("rol_usuario", "")).strip().upper() == "PROGRAMADOR":
+                st.caption(f"🔒 Solo conversaciones de la instancia {evo_inst_chat} (cuenta actual).")
             if not chats_pacientes:
                 st.info("No hay conversaciones activas con pacientes de la base.")
             else:
