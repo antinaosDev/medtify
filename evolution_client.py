@@ -696,6 +696,17 @@ def clasificar_por_keywords(texto, keywords_si=None, keywords_no=None):
 
     if mejor_estado is None:
         return "AMBIGUO", None
+
+    # Salvaguarda de negación (FIX4): si gana una AFIRMACIÓN pero el texto
+    # inmediatamente anterior al match (ventana de ~80 chars) termina en 'no'
+    # standalone + espacio(s), la afirmación se anula -> NO ASISTIRA.
+    # Un 'no' seguido de coma ("no, si voy") NO anula (es corrección): la coma
+    # rompe el patrón \bno\b\s+$ aplicado al prefix.
+    if mejor_estado == "CONFIRMADO":
+        prefix = msg_clean[max(0, mejor_pos - 80):mejor_pos]
+        if re.search(r'\bno\b\s+$', prefix):
+            return "NO ASISTIRA", f"{mejor_frase} -> negado"
+
     return mejor_estado, mejor_frase
 
 
