@@ -310,22 +310,11 @@ class OpenWAAdapter:
         if not body:
             return "PENDIENTE", "Último mensaje vacío"
 
-        msg_clean = body.lower()
-
-        for frase in keywords_no:
-            frase_clean = frase.lower()
-            prefix = r'\b' if re.match(r'^\w', frase_clean) else r''
-            suffix = r'\b' if re.search(r'\w$', frase_clean) else r''
-            pattern = prefix + re.escape(frase_clean) + suffix
-            if re.search(pattern, msg_clean):
-                return "NO ASISTIRA", f"{body} (Match: {frase})"
-
-        for frase in keywords_si:
-            frase_clean = frase.lower()
-            prefix = r'\b' if re.match(r'^\w', frase_clean) else r''
-            suffix = r'\b' if re.search(r'\w$', frase_clean) else r''
-            pattern = prefix + re.escape(frase_clean) + suffix
-            if re.search(pattern, msg_clean):
-                return "CONFIRMADO", f"{body} (Match: {frase})"
-
+        # Nueva regla "última keyword gana": se escanean TODAS las keywords (NO y
+        # SI juntas) con el mismo regex \b...\b lowercase y gana la que aparece
+        # MÁS TARDE en el body. Misma implementación que evolution_client.
+        from evolution_client import clasificar_por_keywords
+        estado_match, frase_match = clasificar_por_keywords(body, keywords_si, keywords_no)
+        if frase_match is not None:
+            return estado_match, f"{body} (Match: {frase_match})"
         return "AMBIGUO", f"No clasificado: {body}"

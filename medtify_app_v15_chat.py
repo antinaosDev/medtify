@@ -1180,14 +1180,18 @@ def verificar_respuestas_wsp(client, numero, keywords_si=None, keywords_no=None,
 
 
 def _fecha_notif_a_epoch(fecha_str):
-    """FECHA_NOTIF_* (dd/mm/aaaa hh:mm en America/Santiago) -> epoch UTC (int).
-    Devuelve None si está vacía o no parsea: en ese caso el caller usa
-    notif_epoch=None y el clasificador conserva el comportamiento legacy (solo texto)."""
-    try:
-        dt_naive = datetime.strptime(str(fecha_str).strip(), "%d/%m/%Y %H:%M")
-        return int(dt_naive.replace(tzinfo=TZ_CHILE).timestamp())
-    except (ValueError, TypeError):
-        return None
+    """FECHA_NOTIF_* (dd/mm/aaaa hh:mm[:ss] en America/Santiago) -> epoch UTC (int).
+    La planilla real guarda "14/9/2026 11:48:00" CON segundos (y en alguna rama
+    legacy sin segundos). Se prueban ambos formatos en orden; devuelve None si
+    está vacía o no parsea: en ese caso el caller usa notif_epoch=None y el
+    clasificador conserva el comportamiento legacy (solo texto)."""
+    for _fmt in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M"):
+        try:
+            dt_naive = datetime.strptime(str(fecha_str).strip(), _fmt)
+            return int(dt_naive.replace(tzinfo=TZ_CHILE).timestamp())
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 def _numero_notificador_a_digits(info_str):
@@ -3310,14 +3314,23 @@ elif menu_option == "Centro de Notificaciones":
                             # puede estar mezclado con respuestas de otro número (QR cambiado).
                             # PENDIENTE no llama a la API de mensajes y conserva el contador
                             # TOTAL_REV (cae en la rama [WAIT] de más abajo, sigue el bucle).
+                            # Fila legacy (v13/v14, sin INFO del notificador en ninguna columna):
+                            # se OMITE el gate de identidad y se clasifica igual, protegido
+                            # por el anclaje temporal notif_epoch (=None solo si la fecha
+                            # tampoco parsea; con FECHA_NOTIF_1/2 presente se mantiene el ancla).
                             _info_fila = row.get('INFO_NOTIFICACION_2', '') if es_reagendamiento else row.get('INFO_NOTIFICACION_1', '')
-                            expected_digits = _numero_notificador_a_digits(_info_fila)
-                            if expected_digits is None:
-                                estado_clasificacion, detalle = "PENDIENTE", "(gate) INFO notificador vacío o ilegible"
-                            elif current_number_digits is None or current_number_digits != expected_digits:
-                                estado_clasificacion, detalle = "PENDIENTE", "(gate) número conectado no coincide con el notificador"
-                            else:
+                            _info_alt_fila = row.get('INFO_NOTIFICACION_1', '') if es_reagendamiento else row.get('INFO_NOTIFICACION_2', '')
+                            _tiene_info = bool(str(_info_fila or '').strip()) or bool(str(_info_alt_fila or '').strip())
+                            if not _tiene_info:
                                 estado_clasificacion, detalle = verificar_respuestas_wsp(client, row['TELEFONO'], mis_si, mis_no, notif_epoch)
+                            else:
+                                expected_digits = _numero_notificador_a_digits(_info_fila)
+                                if expected_digits is None:
+                                    estado_clasificacion, detalle = "PENDIENTE", "(gate) INFO notificador vacío o ilegible"
+                                elif current_number_digits is None or current_number_digits != expected_digits:
+                                    estado_clasificacion, detalle = "PENDIENTE", "(gate) número conectado no coincide con el notificador"
+                                else:
+                                    estado_clasificacion, detalle = verificar_respuestas_wsp(client, row['TELEFONO'], mis_si, mis_no, notif_epoch)
                             
                             # Actualizar Contador
                             try:

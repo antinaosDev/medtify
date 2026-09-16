@@ -643,32 +643,60 @@ class EvolutionClient:
         if not body:
             return "PENDIENTE", "Último mensaje vacío"
 
-        msg_clean = body.lower()
-
-        # STEP 0 (v14 parity): si el último mensaje es notificación del bot → PENDIENTE
+        # STEP 1 (v14 parity): si el último mensaje es notificación del bot → PENDIENTE
         if es_notificacion(body):
             return "PENDIENTE", "Ultimo mensaje es notificacion del bot, paciente aun no responde"
 
-        # 1. Check negations (priority)
-        for frase in keywords_no:
-            frase_clean = frase.lower()
-            prefix = r'\b' if re.match(r'^\w', frase_clean) else r''
-            suffix = r'\b' if re.search(r'\w$', frase_clean) else r''
-            pattern = prefix + re.escape(frase_clean) + suffix
-            if re.search(pattern, msg_clean):
-                return "NO ASISTIRA", f"{body} (Match: {frase})"
-
-        # 2. Check confirmations
-        for frase in keywords_si:
-            frase_clean = frase.lower()
-            prefix = r'\b' if re.match(r'^\w', frase_clean) else r''
-            suffix = r'\b' if re.search(r'\w$', frase_clean) else r''
-            pattern = prefix + re.escape(frase_clean) + suffix
-            if re.search(pattern, msg_clean):
-                return "CONFIRMADO", f"{body} (Match: {frase})"
-
-        # 3. Unclassified
+        # STEP 2 + STEP 3: nueva regla "última keyword gana". Se escanean TODAS
+        # las keywords (NO y SI juntas) con el mismo regex \b...\b lowercase y
+        # gana la que aparece MÁS TARDE en el body (mayor match.start()). Esto
+        # evita que un 'no' embebido en un body sucio (p. ej. "M1 mensaje no
+        # leído+56 9 3216 9237AyerSi voy air1") bloquee una confirmación posterior.
+        # Sin ningún match -> AMBIGUO (igual que la regla anterior).
+        estado_match, frase_match = clasificar_por_keywords(body, keywords_si, keywords_no)
+        if frase_match is not None:
+            return estado_match, f"{body} (Match: {frase_match})"
         return "AMBIGUO", f"No clasificado: {body}"
+
+
+def clasificar_por_keywords(texto, keywords_si=None, keywords_no=None):
+    """Nueva regla del clasificador: se escanean TODAS las keywords (NO y SI
+    juntas) con el mismo regex \\b...\\b lowercase y gana la que aparece MÁS
+    TARDE en el body (mayor match.start()).
+
+    Devuelve (estado, frase): ('CONFIRMADO'|'NO ASISTIRA', <keyword original>)
+    o ('AMBIGUO', None) si no hay ningún match.
+    """
+    import re
+    if keywords_si is None:
+        keywords_si = DEFAULT_RESPUESTAS_SI
+    if keywords_no is None:
+        keywords_no = DEFAULT_RESPUESTAS_NO
+    msg_clean = str(texto or "").lower()
+    mejor_pos = -1
+    mejor_estado = None
+    mejor_frase = None
+
+    def _escanea(frase, estado):
+        nonlocal mejor_pos, mejor_estado, mejor_frase
+        frase_clean = str(frase).lower()
+        prefix = r'\b' if re.match(r'^\w', frase_clean) else r''
+        suffix = r'\b' if re.search(r'\w$', frase_clean) else r''
+        pattern = prefix + re.escape(frase_clean) + suffix
+        m = re.search(pattern, msg_clean)
+        if m and m.start() > mejor_pos:
+            mejor_pos = m.start()
+            mejor_estado = estado
+            mejor_frase = frase
+
+    for frase in keywords_no:
+        _escanea(frase, "NO ASISTIRA")
+    for frase in keywords_si:
+        _escanea(frase, "CONFIRMADO")
+
+    if mejor_estado is None:
+        return "AMBIGUO", None
+    return mejor_estado, mejor_frase
 
 
 # === DEFAULT KEYWORDS (sincronizadas con master medtify_app_v15.py / v14) ===
