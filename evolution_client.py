@@ -592,7 +592,8 @@ class EvolutionClient:
             return None
 
     def verificar_respuesta(self, numero: str, keywords_si: List[str] = None,
-                            keywords_no: List[str] = None) -> Tuple[str, str]:
+                            keywords_no: List[str] = None,
+                            notif_epoch: Optional[int] = None) -> Tuple[str, str]:
         """
         Verify patient response by fetching last message and classifying it.
 
@@ -600,9 +601,14 @@ class EvolutionClient:
             numero: Phone number
             keywords_si: List of confirmation keywords
             keywords_no: List of rejection keywords
+            notif_epoch: Optional epoch (Unix seconds, UTC) de la notificación que
+                originó la respuesta. Cuando se entrega, el último mensaje solo se
+                acepta si su timestamp es POSTERIOR (>=) a notif_epoch; si es
+                anterior o no tiene timestamp utilizable -> PENDIENTE. None conserva
+                el comportamiento legacy (clasificación solo por texto).
 
         Returns:
-            (estado, detalle) where estado is CONFIRMADO, NO ASISTIRA, or AMBIGUO
+            (estado, detalle) where estado is CONFIRMADO, NO ASISTIRA, AMBIGUO o PENDIENTE
         """
         import re
 
@@ -615,6 +621,23 @@ class EvolutionClient:
 
         if not last_msg:
             return "PENDIENTE", "No hay mensajes del paciente"
+
+        # Anclaje temporal: si notif_epoch está presente, la respuesta solo es
+        # válida si el último mensaje es POSTERIOR a la notificación que la originó.
+        if notif_epoch is not None:
+            ts_msg = None
+            ts_raw = last_msg.get("timestamp", "")
+            try:
+                if isinstance(ts_raw, (int, float)):
+                    ts_msg = int(ts_raw)
+                elif isinstance(ts_raw, str) and ts_raw.strip():
+                    ts_msg = int(float(ts_raw.strip()))
+            except (ValueError, TypeError):
+                ts_msg = None
+            if ts_msg is None:
+                return "PENDIENTE", "Ultimo mensaje sin timestamp utilizable"
+            if ts_msg < notif_epoch:
+                return "PENDIENTE", "Ultimo mensaje es anterior a la notificacion"
 
         body = last_msg.get("body", "").strip()
         if not body:

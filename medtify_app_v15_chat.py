@@ -1174,9 +1174,20 @@ Equipo CESFAM Cholchol
 
     return ""
 
-def verificar_respuestas_wsp(client, numero, keywords_si=None, keywords_no=None):
+def verificar_respuestas_wsp(client, numero, keywords_si=None, keywords_no=None, notif_epoch=None):
     """Verify patient response via Evolution API (replaces Selenium DOM scraping)."""
-    return client.verificar_respuesta(numero, keywords_si, keywords_no)
+    return client.verificar_respuesta(numero, keywords_si, keywords_no, notif_epoch)
+
+
+def _fecha_notif_a_epoch(fecha_str):
+    """FECHA_NOTIF_* (dd/mm/aaaa hh:mm en America/Santiago) -> epoch UTC (int).
+    Devuelve None si está vacía o no parsea: en ese caso el caller usa
+    notif_epoch=None y el clasificador conserva el comportamiento legacy (solo texto)."""
+    try:
+        dt_naive = datetime.strptime(str(fecha_str).strip(), "%d/%m/%Y %H:%M")
+        return int(dt_naive.replace(tzinfo=TZ_CHILE).timestamp())
+    except (ValueError, TypeError):
+        return None
 
 
 def refresh_template_from_sheets(tipo):
@@ -2084,8 +2095,8 @@ if menu_option == "Dashboard Analytics":
     
     # --- SISTEMA DE PESTAÑAS (ACTUALIZADO) ---
     # Se agrega "🔍 Policonsultantes" al final
-    tab1, tab2, tab_dem, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-        "📉 Respuesta", "📊 Demografía Edad", "🗺️ Territorio & Percápita", "🩺 Carga", "♻️ Gestión Cupos", "⏰ Temporal", "⚠️ Cambios", "🗓️ Calendario", "🔍 Policonsultantes"
+    tab1, tab2, tab_dem, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        "📉 Respuesta", "📊 Demografía Edad", "🗺️ Territorio & Percápita", "🩺 Carga", "♻️ Gestión Cupos", "⏰ Temporal", "⚠️ Cambios", "🗓️ Calendario", "🔍 Policonsultantes", "🔔 Notificador"
     ])
 
     
@@ -2513,6 +2524,94 @@ if menu_option == "Dashboard Analytics":
         else:
             st.warning("No hay datos suficientes.")
 
+    # === TAB 10: NOTIFICADOR (ANÁLISIS DE ENVÍOS WHATSAPP) ===
+    with tab9:
+        st.markdown("##### 🔔 Análisis del Notificador (Envíos WhatsApp)")
+
+        # --- Parseo robusto de FECHA_NOTIF_1 ---
+        _notif_fecha_raw = safe_get_col(df, 'FECHA_NOTIF_1')
+        _notif_fecha = pd.Series(pd.NaT, index=df.index)
+        if safe_has_col(df, 'FECHA_NOTIF_1'):
+            _notif_fecha = pd.to_datetime(_notif_fecha_raw, format="%d/%m/%Y %H:%M:%S", errors='coerce')
+            _notif_fecha = _notif_fecha.fillna(pd.to_datetime(_notif_fecha_raw, format="%d/%m/%Y %H:%M", errors='coerce'))
+            _notif_fecha = _notif_fecha.fillna(pd.to_datetime(_notif_fecha_raw, dayfirst=True, errors='coerce'))
+
+        # --- Filtro base: "notificadas" = ESTADO no vacío ---
+        _estado_ser = safe_get_col(df, 'ESTADO', pd.Series('', index=df.index))
+        _notif_mask = _estado_ser.notna() & (_estado_ser.astype(str).str.strip() != '')
+
+        _n_ok = len(df[_notif_mask & (_estado_ser == 'NOTIFICADO OK')])
+        _n_err = len(df[_notif_mask & (_estado_ser == 'ERROR')])
+        _n_sin = len(df[~_notif_mask])
+        _tasa_err = (_n_err / (_n_ok + _n_err) * 100) if (_n_ok + _n_err) > 0 else 0.0
+
+        if (_n_ok + _n_err) > 0:
+            n1, n2, n3, n4 = st.columns(4)
+            with n1:
+                st.metric("Notificados OK", _n_ok, border=True)
+            with n2:
+                st.metric("Con ERROR", _n_err, border=True)
+            with n3:
+                st.metric("Tasa de Error", f"{_tasa_err:.1f}%", border=True)
+            with n4:
+                st.metric("Sin estado", _n_sin, border=True)
+        else:
+            st.info("Aún no hay envíos registrados en la base")
+
+        # --- Tabla de trabajo solo con envíos con estado y fecha válida ---
+        _envios_df = df[_notif_mask].copy()
+        _envios_df['FECHA_NOTIF_DT'] = _notif_fecha.loc[_envios_df.index]
+        _envios_df = _envios_df[_envios_df['FECHA_NOTIF_DT'].notna()]
+        _envios_df = _envios_df[_envios_df['ESTADO'].isin(['NOTIFICADO OK', 'ERROR'])]
+
+        # --- Gráfico 1: Envíos por día (OK vs ERROR) ---
+        st.markdown("##### 📈 Envíos por día (OK vs ERROR)")
+        if not _envios_df.empty:
+            _envios_df['FECHA_NOTIF_FECHA'] = _envios_df['FECHA_NOTIF_DT'].dt.date
+            _casos_diarios = _envios_df.groupby(['FECHA_NOTIF_FECHA', 'ESTADO']).size().reset_index(name='Cantidad')
+            _chart_diario = alt.Chart(_casos_diarios).mark_bar().encode(
+                x=alt.X('FECHA_NOTIF_FECHA:T', title='Fecha'),
+                y=alt.Y('Cantidad:Q', title='N° Envíos'),
+                color=alt.Color('ESTADO:N', title='Estado',
+                                scale=alt.Scale(domain=['NOTIFICADO OK', 'ERROR'], range=['#88C543', '#D32F2F'])),
+                tooltip=['FECHA_NOTIF_FECHA', 'ESTADO', 'Cantidad']
+            ).properties(height=280, title='Envíos por día (OK vs ERROR)')
+            st.altair_chart(_chart_diario, width="stretch")
+        else:
+            st.info("No hay envíos con fecha válida para graficar.")
+
+        # --- Gráfico 2: Notificaciones por notificador ---
+        st.markdown("##### 🔔 Notificaciones por notificador")
+        _info_col = safe_get_col(df, 'INFO_NOTIFICACION_1')
+        if safe_has_col(df, 'INFO_NOTIFICACION_1') and not _envios_df.empty:
+            _envios_df['NOTIFICADOR'] = _info_col.loc[_envios_df.index].astype(str).str.strip()
+            _envios_df.loc[_envios_df['NOTIFICADOR'].isin(['', 'nan', 'None', 'NaT']), 'NOTIFICADOR'] = 'Sin registrar'
+            _casos_notif = _envios_df.groupby(['NOTIFICADOR', 'ESTADO']).size().reset_index(name='Cantidad')
+            _chart_notif = alt.Chart(_casos_notif).mark_bar().encode(
+                x=alt.X('NOTIFICADOR:N', title='Notificador', sort='-y'),
+                y=alt.Y('Cantidad:Q', title='N° Notificaciones'),
+                color=alt.Color('ESTADO:N', title='Estado',
+                                scale=alt.Scale(domain=['NOTIFICADO OK', 'ERROR'], range=['#88C543', '#D32F2F'])),
+                tooltip=['NOTIFICADOR', 'ESTADO', 'Cantidad']
+            ).properties(height=280, title='Notificaciones por notificador')
+            st.altair_chart(_chart_notif, width="stretch")
+        else:
+            st.info("No hay datos de notificador para graficar.")
+
+        # --- Reagend (solo se muestra si hay datos reales) ---
+        _estado_rea_ser = safe_get_col(df, 'ESTADO_REA', pd.Series('', index=df.index))
+        _fecha_notif2_ser = safe_get_col(df, 'FECHA_NOTIF_2', pd.Series('', index=df.index))
+        _rea_mask = _estado_rea_ser.notna() & (_estado_rea_ser.astype(str).str.strip() != '')
+        _fecha2_mask = _fecha_notif2_ser.notna() & (_fecha_notif2_ser.astype(str).str.strip() != '')
+        if _rea_mask.sum() > 0 or _fecha2_mask.sum() > 0:
+            _rea_ok = len(df[_rea_mask & safe_str_contains(_estado_rea_ser, 'OK')])
+            _rea_err = len(df[_rea_mask & safe_str_contains(_estado_rea_ser, 'ERROR')])
+            r1, r2 = st.columns(2)
+            with r1:
+                st.metric("Reagend OK", _rea_ok, border=True)
+            with r2:
+                st.metric("Reagend ERROR", _rea_err, border=True)
+
 # -----------------------------------------------------------------------------
 # VISTA 2: GESTIÓN DE HORAS (REAGENDAMIENTO)
 # -----------------------------------------------------------------------------
@@ -2921,8 +3020,8 @@ elif menu_option == "Centro de Notificaciones":
                                 except: pass
 
                         # === BLOQUE DE ENVÍO REAGENDAMIENTO ===
-                        # Allow retry if st_rea is empty OR was ERROR from previous failed attempt
-                        if es_cambio and st_rea in ("", "ERROR"):
+                        # Envio unico: solo filas con estado vacio (ERROR es terminal, no se reintenta)
+                        if es_cambio and st_rea == "":
                             # --- AQUI SÍ ESPERAMOS (SOLO SI VAMOS A ENVIAR) ---
                             update_terminal(f'<span class="log-info">⏳ Esperando turno seguro para enviar...</span>')
                             time.sleep(random.uniform(12, 30))
@@ -2966,8 +3065,8 @@ elif menu_option == "Centro de Notificaciones":
                             accion = True
 
                         # === BLOQUE DE ENVÍO RECORDATORIO NORMAL ===
-                        # Allow retry if st_nor is empty OR was ERROR from previous failed attempt
-                        elif not es_cambio and st_nor in ("", "ERROR"):
+                        # Envio unico: solo filas con estado vacio (ERROR es terminal, no se reintenta)
+                        elif not es_cambio and st_nor == "":
 
                             # === CONDICIÓN DE ENVÍO ===
                             if 1 <= dias <= rango_maximo:
@@ -2994,210 +3093,6 @@ elif menu_option == "Centro de Notificaciones":
                                         if _v_reagend:
                                             CUSTOM_TEMPLATES['MSG_REAGEND'] = _v_reagend
                                         update_terminal(f'<span class="log-info">[TEMPLATE] Templates refrescados desde Google Sheets.</span>')
-                                    try:
-                                        sheet_conn.update_cell(fila, 12, "NOTIFICADO OK") # ESTADO
-                                        sheet_conn.update_cell(fila, 13, ahora)           # FECHA_NOTIF_1
-                                        sheet_conn.update_cell(fila, 30, id_notif_1)
-                                        sheet_conn.update_cell(fila, 14, "WHATSAPP")      # METODO
-                                    except: pass
-                                    update_terminal(f'<span class="log-success">[SENT] Recordatorio enviado a {nombre}')
-                                else:
-                                    try:
-                                        sheet_conn.update_cell(fila, 12, "ERROR")          
-                                        sheet_conn.update_cell(fila, 13, ahora)
-                                        sheet_conn.update_cell(fila, 30, id_notif_1)
-                                        sheet_conn.update_cell(fila, 14, "WHATSAPP")
-                                    except: pass
-                                    update_terminal(f'<span class="log-error">[ERR] Fallo envío a {nombre}: {log}')
-                                accion = True
-
-                            elif dias < 0:
-                                 if row['OBSERVACION'] == "": 
-                                     try: sheet_conn.update_cell(fila, 15, "Fecha Pasada") 
-                                     except: pass
-
-                        else:
-                            # Row was skipped - show why in the log
-                            _skip_reasons = []
-                            if es_cambio and st_rea not in ("", "ERROR"):
-                                _skip_reasons.append(f"REAG ya enviado (estado='{st_rea}')")
-                            elif not es_cambio and st_nor not in ("", "ERROR"):
-                                _skip_reasons.append(f"REC ya enviado (estado='{st_nor}')")
-                            elif not es_cambio and not (1 <= dias <= rango_maximo):
-                                _skip_reasons.append(f"dias={dias} fuera de rango [1-{rango_maximo}]")
-                            if _skip_reasons:
-                                print(f"[LOOP] SKIP {nombre}: {' | '.join(_skip_reasons)}", flush=True)
-                                update_terminal(f'<span class="log-info">[SKIP] {nombre}: {" | ".join(_skip_reasons)}</span>')
-
-                    except Exception as e_inner:
-                        print(f"[LOOP] EXCEPTION in row {fila}: {type(e_inner).__name__}: {e_inner}", flush=True)
-                        update_terminal(f'<span class="log-error">[CRIT] Error en fila {fila}: {str(e_inner)}</span>')
-                        continue 
-
-                    progress_bar.progress((idx + 1) / total_rows)
-
-                print(f"[LOOP] All {total_rows} rows processed", flush=True)
-                update_terminal(f'<span class="log-success">[DONE] Todas las tareas finalizadas.</span>')
-                st.balloons()
-                st.cache_data.clear() 
-                
-            except Exception as e:
-                st.error(f"Error crítico: {e}")
-            finally:
-                pass  # client cleanup handled by requests session
-            client = init_evolution_client()
-            if not client:
-                st.error("Error crítico: No se pudo conectar a Evolution API. Verifique la configuración del servidor.")
-                st.stop()
-            
-            logs = []
-            def update_terminal(new_log_line):
-                logs.append(new_log_line)
-                log_content = "<br>".join(logs[-15:])
-                log_placeholder.markdown(f"""
-                <div class="terminal-window">
-                    <div class="terminal-header">
-                        <div class="terminal-dot dot-red"></div>
-                        <div class="terminal-dot dot-yellow"></div>
-                        <div class="terminal-dot dot-green"></div>
-                    </div>
-                    <div class="terminal-body">
-                        {log_content}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            update_terminal(f'<span class="log-info">[BOOT]</span> Iniciando navegador seguro...')
-            
-            try:
-                update_terminal('<span class="log-info">[CONN]</span> Conectando a Evolution API...')
-                update_terminal(f'<span class="log-info">[AUTH]</span> Verificando conexión WhatsApp...')
-                
-                if esperar_login_qr(client):
-                    update_terminal(f'<span class="log-success">[AUTH]</span> Login exitoso. Acceso concedido.')
-                    time.sleep(2)
-                else:
-                    update_terminal(f'<span class="log-info">[QR]</span> WhatsApp no conectado. Generando QR...')
-                    update_terminal(f'<span class="log-info">[QR] WhatsApp no conectado. Generando QR...</span>')
-                    try:
-                        qr_code = client.get_qr_code()
-                        if qr_code:
-                            st.warning("WhatsApp no conectado. Escanea este QR con tu celular:")
-                            st.image(qr_code, caption="Escanea con WhatsApp", width=300)
-                            st.info("1. Abre WhatsApp > Dispositivos vinculados > Vincular dispositivo | 2. Escanea este codigo")
-                            import time as _time
-                            for i in range(90):  # 3 minutes max
-                                _time.sleep(2)
-                                if esperar_login_qr(client):
-                                    update_terminal(f'<span class="log-success">[QR] WhatsApp conectado! Continuando envio...</span>')
-                                    st.success("WhatsApp conectado! Iniciando envios...")
-                                    time.sleep(2)
-                                    break
-                            else:
-                                st.error("Tiempo agotado. Conecta WhatsApp y vuelve a intentar.")
-                                update_terminal(f'<span class="log-error">[QR] Tiempo agotado esperando conexion</span>')
-                                st.stop()
-                        else:
-                            st.error("No se pudo generar QR. Verifica Evolution API.")
-                            st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
-                            st.stop()
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-                        st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
-                        st.stop()
-
-                sheet_conn, _, _ = connect_sheet()
-                data = sheet_conn.get_all_values()
-                df_proc = pd.DataFrame(data[1:], columns=data[0])
-                df_proc.columns = df_proc.columns.str.strip()
-                
-                total_rows = len(df_proc)
-                progress_bar = st.progress(0)
-
-                # CONTADOR PARA PAUSAS LARGAS (COOL-DOWN)
-                mensajes_enviados_racha = 0 
-
-                for idx, row in df_proc.iterrows():
-                    # 1. LÓGICA DE DESCANSO LARGO (FRENO DE EMERGENCIA)
-                    if mensajes_enviados_racha >= random.randint(5, 9):
-                        tiempo_descanso = random.randint(120, 300) # 2 a 5 minutos
-                        update_terminal(f'<span class="log-info">☕ Tomando descanso de seguridad por {tiempo_descanso}s...</span>')
-                        time.sleep(tiempo_descanso)
-                        mensajes_enviados_racha = 0 # Reiniciar contador
-                    
-                    # 2. PAUSA ENTRE MENSAJES INDIVIDUALES
-                    time.sleep(random.uniform(12, 30))
-
-                    try: 
-                        pass  # Evolution API stays connected
-
-                        fila = idx + 2
-                        nombre = row['NOMBRE_PACIENTE']
-                        
-                        es_cambio = str(row['CAMBIO_DE_HORA']).strip().upper() == "SI"
-                        st_rea = str(row['ESTADO_REA']).strip()
-                        st_nor = str(row['ESTADO']).strip()
-                        
-                        ahora = ahora_santiago()
-                        accion = False
-
-                        # === BLOQUE DE ENVÍO REAGENDAMIENTO ===
-                        if es_cambio and st_rea == "":
-                            update_terminal(f'<span class="log-info">[PROC] Reagendando: {nombre}...')
-                            
-                            if not row['HORA_NUEVA_FECHA'] or not row['NUEVA_FECHA']:
-                                update_terminal(f'<span class="log-error">[FAIL] Datos incompletos para {nombre}')
-                            else:
-                                # Usar mensaje dinámico desde Admin
-                                msg = get_template(row, "REAGENDAMIENTO")
-                                ok, log = enviar_mensaje_wsp(client, row['TELEFONO'], msg)
-                                if ok:
-                                    mensajes_enviados_racha += 1
-                                    try:
-                                        sheet_conn.update_cell(fila, 22, "NOTIFICADO OK") # ESTADO_REA
-                                        sheet_conn.update_cell(fila, 23, ahora)            # FECHA_NOTIF_2
-                                        sheet_conn.update_cell(fila, 31, id_notif_2)
-                                        sheet_conn.update_cell(fila, 24, "WHATSAPP")       # METODO_REA
-                                    except: pass
-                                    update_terminal(f'<span class="log-success">[SENT] Reagendamiento enviado a {nombre}')
-                                else:
-                                    try:
-                                        sheet_conn.update_cell(fila, 22, "ERROR")            
-                                        sheet_conn.update_cell(fila, 23, ahora)
-                                        sheet_conn.update_cell(fila, 31, id_notif_2)
-                                        sheet_conn.update_cell(fila, 24, "WHATSAPP")
-                                    except: pass
-                                    update_terminal(f'<span class="log-error">[ERR] Fallo envío a {nombre}: {log}')
-                            accion = True
-
-                        # === BLOQUE DE ENVÍO RECORDATORIO NORMAL ===
-                        elif not es_cambio and st_nor == "":
-                            dias = calcular_dias(row['FECHA_AGENDADA'])
-                            
-                            # === LÓGICA DE VIERNES (NOTIFICAR HASTA EL LUNES) ===
-                            dia_semana_hoy = datetime.now(TZ_CHILE).weekday() # 4 es Viernes
-                            rango_maximo = 3 if dia_semana_hoy == 4 else 2
-                            
-                            # Actualización visual en Google Sheets (Column O - Observación)
-                            if str(row['OBSERVACION']).strip() == "":
-                                try:
-                                    if dias == 0: sheet_conn.update_cell(fila, 15, "⚠️ Atención HOY")
-                                    elif dias == 1: sheet_conn.update_cell(fila, 15, "⚠️ Falta 1 día")
-                                    elif dias == 2: sheet_conn.update_cell(fila, 15, "⚠️ Faltan 2 días")
-                                    elif dias == 3 and dia_semana_hoy == 4: sheet_conn.update_cell(fila, 15, "⚠️ Faltan 3 días (Fin de Semana)")
-                                    elif dias > rango_maximo: sheet_conn.update_cell(fila, 15, f"Faltan {dias} días")
-                                except: pass
-
-                            # === CONDICIÓN DE ENVÍO MODIFICADA ===
-                            if 1 <= dias <= rango_maximo:
-                                update_terminal(f'<span class="log-info">[PROC] Recordatorio: {nombre} ({dias} días)...')
-                                
-                                # Obtener mensaje dinámico
-                                msg = get_template(row, "RECORDATORIO")
-                                ok, log = enviar_mensaje_wsp(client, row['TELEFONO'], msg)
-                                
-                                if ok:
-                                    mensajes_enviados_racha += 1
                                     try:
                                         sheet_conn.update_cell(fila, 12, "NOTIFICADO OK") # ESTADO
                                         sheet_conn.update_cell(fila, 13, ahora)           # FECHA_NOTIF_1
@@ -3371,7 +3266,12 @@ elif menu_option == "Centro de Notificaciones":
                         if estado_notif == "NOTIFICADO OK" and not ya_finalizado:
                             update_terminal(f'<span class="log-info">[CHECK] Revisando {nombre} (Intento {conteo_actual + 1}/5)...')
                             
-                            estado_clasificacion, detalle = verificar_respuestas_wsp(client, row['TELEFONO'], mis_si, mis_no)
+                            # Anclaje temporal: solo aceptar respuesta si es POSTERIOR a la notificación.
+                            # Rama normal -> FECHA_NOTIF_1; reagendamiento -> FECHA_NOTIF_2.
+                            # Fecha vacía/no parseable -> notif_epoch=None (gate desactivado, legacy).
+                            _fecha_notif = row.get('FECHA_NOTIF_2', '') if es_reagendamiento else row.get('FECHA_NOTIF_1', '')
+                            notif_epoch = _fecha_notif_a_epoch(_fecha_notif)
+                            estado_clasificacion, detalle = verificar_respuestas_wsp(client, row['TELEFONO'], mis_si, mis_no, notif_epoch)
                             
                             # Actualizar Contador
                             try:
