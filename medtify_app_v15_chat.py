@@ -1190,6 +1190,25 @@ def _fecha_notif_a_epoch(fecha_str):
         return None
 
 
+def _numero_notificador_a_digits(info_str):
+    """INFO_NOTIFICACION_* -> dígitos del número notificador (p. ej. '56958735112').
+
+    Formato real guardado por _cached_notificador_info: 'Perfil (número)' o solo
+    'número'. GATE de identidad del QR: se compara contra el número HOY conectado
+    a la instancia (get_instance_details().phone, mismo formato de dígitos).
+    Devuelve None si está vacío o no trae dígitos recuperables (-> PENDIENTE,
+    no se puede confirmar quién notificó; comportamiento conservador)."""
+    try:
+        txt = str(info_str or "").strip()
+        if not txt:
+            return None
+        m = re.search(r"\(([^)]+)\)", txt)
+        fuente = m.group(1) if m else txt
+        return re.sub(r"\D", "", fuente) or None
+    except Exception:
+        return None
+
+
 def refresh_template_from_sheets(tipo):
     """
     Lee el template desde Google Sheets forzando recalculo para obtener variación aleatoria.
@@ -3208,6 +3227,18 @@ elif menu_option == "Centro de Notificaciones":
                         st.info("Abre http://79.98.29.50:80/manager para configurar WhatsApp")
                         st.stop()
 
+                # GATE de identidad del número (contexto: la instancia se reconecta
+                # cambiando el número de WhatsApp -> chats de dos números mezclados).
+                # Número HOY conectado, FRESCO: se toma UNA vez y get_instance_details
+                # hace HTTP vivo (refleja el QR actual, no el de un envío anterior).
+                # Si falla (red) -> None y cada fila queda PENDIENTE (nunca crashea).
+                current_number_digits = None
+                try:
+                    _det = client.get_instance_details() or {}
+                    current_number_digits = _numero_notificador_a_digits(str(_det.get("phone", "") or ""))
+                except Exception:
+                    current_number_digits = None
+
                 sheet_conn, _, _ = connect_sheet()
                 data = sheet_conn.get_all_values()
                 df_proc = pd.DataFrame(data[1:], columns=data[0])
@@ -3271,7 +3302,22 @@ elif menu_option == "Centro de Notificaciones":
                             # Fecha vacía/no parseable -> notif_epoch=None (gate desactivado, legacy).
                             _fecha_notif = row.get('FECHA_NOTIF_2', '') if es_reagendamiento else row.get('FECHA_NOTIF_1', '')
                             notif_epoch = _fecha_notif_a_epoch(_fecha_notif)
-                            estado_clasificacion, detalle = verificar_respuestas_wsp(client, row['TELEFONO'], mis_si, mis_no, notif_epoch)
+
+                            # GATE de identidad del número: exigimos que el número HOY
+                            # conectado a la instancia sea el mismo que notificó la fila
+                            # (INFO_NOTIFICACION_2 en reagend, INFO_NOTIFICACION_1 en normal).
+                            # Si no coincide, o no se puede confirmar -> PENDIENTE: el chat
+                            # puede estar mezclado con respuestas de otro número (QR cambiado).
+                            # PENDIENTE no llama a la API de mensajes y conserva el contador
+                            # TOTAL_REV (cae en la rama [WAIT] de más abajo, sigue el bucle).
+                            _info_fila = row.get('INFO_NOTIFICACION_2', '') if es_reagendamiento else row.get('INFO_NOTIFICACION_1', '')
+                            expected_digits = _numero_notificador_a_digits(_info_fila)
+                            if expected_digits is None:
+                                estado_clasificacion, detalle = "PENDIENTE", "(gate) INFO notificador vacío o ilegible"
+                            elif current_number_digits is None or current_number_digits != expected_digits:
+                                estado_clasificacion, detalle = "PENDIENTE", "(gate) número conectado no coincide con el notificador"
+                            else:
+                                estado_clasificacion, detalle = verificar_respuestas_wsp(client, row['TELEFONO'], mis_si, mis_no, notif_epoch)
                             
                             # Actualizar Contador
                             try:
