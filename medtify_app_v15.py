@@ -1185,7 +1185,9 @@ def verificar_respuestas_wsp(client, numero, keywords_si=None, keywords_no=None,
 # ancla temporal (solo respuestas POSTERIORES al envío; los mensajes del bot
 # quedan fuera porque get_last_incoming_message solo mira entrantes y exige
 # el JID del paciente) + clasificador de keywords.
-# Se ejecuta con el tiempo muerto del bucle de envío para no frenar los envíos.
+# Se ejecuta SOLO en el descanso largo (120-300 s) y al terminar toda la cola
+# de envío: revisar a los p segundos de enviar es inútil, el paciente no ha
+# tenido tiempo de responder.
 # ==============================================================================
 
 # Tope de revisiones por fila (columna TOTAL_REV, col 27). Compartido por el
@@ -1229,8 +1231,9 @@ def verificar_en_pausa_envio(client, sheet_conn, df_proc, current_number_digits,
     escribe el resultado en la hoja (col 25/26 CONFIRMA, col 28 detalle y
     col 27 TOTAL_REV +1 con tope MAX_TOTAL_REV), igual que el Botón 2.
 
-    Pensada para correr dentro de las pausas del bucle de envío (descanso
-    largo y espera del turno seguro).
+    Pensada para correr en el descanso largo del bucle de envío y al finalizar
+    toda la cola (nunca en las esperas cortas de 12-30 s: el paciente aún no
+    ha tenido tiempo de responder).
     Devuelve (revisadas, confirmados, rechazos)."""
 
     def _log(html, plain):
@@ -3150,8 +3153,7 @@ elif menu_option == "Centro de Notificaciones":
                     current_number_digits = _numero_notificador_a_digits(str(_det_auto.get("phone", "") or ""))
                 except Exception:
                     current_number_digits = None
-                PAUSA_REV_LARGA = 15  # máx. pacientes revisados en el descanso de 2-5 min
-                PAUSA_REV_ENVIO = 1    # máx. pacientes revisados en la espera de 12-30 s
+                PAUSA_REV_LARGA = 15  # máx. pacientes revisados en el descanso de 120-300 s
                 for idx, row in df_proc.iterrows():
                     # 1. LÓGICA DE DESCANSO LARGO (FRENO DE EMERGENCIA)
                     if mensajes_enviados_racha >= random.randint(5, 9):
@@ -3214,12 +3216,6 @@ elif menu_option == "Centro de Notificaciones":
                         if es_cambio and st_rea == "":
                             # --- AQUI SÍ ESPERAMOS (SOLO SI VAMOS A ENVIAR) ---
                             update_terminal(f'<span class="log-info">⏳ Esperando turno seguro para enviar...</span>')
-                            # --- Revisión automática (1 fila) mientras espera el turno ---
-                            try:
-                                verificar_en_pausa_envio(client, sheet_conn, df_proc, current_number_digits,
-                                                         mis_si, mis_no, PAUSA_REV_ENVIO, update_terminal)
-                            except Exception as e_auto:
-                                print(f"[AUTO] Error verificación en espera de envío: {e_auto}", flush=True)
                             time.sleep(random.uniform(12, 30))
                             
                             update_terminal(f'<span class="log-info">[PROC] Reagendando: {nombre}...')
@@ -3276,12 +3272,6 @@ elif menu_option == "Centro de Notificaciones":
                             if 1 <= dias <= rango_maximo:
                                 # --- AQUI SÍ ESPERAMOS (SOLO SI VAMOS A ENVIAR) ---
                                 update_terminal(f'<span class="log-info">⏳ Esperando turno seguro para enviar...</span>')
-                                # --- Revisión automática (1 fila) mientras espera el turno ---
-                                try:
-                                    verificar_en_pausa_envio(client, sheet_conn, df_proc, current_number_digits,
-                                                             mis_si, mis_no, PAUSA_REV_ENVIO, update_terminal)
-                                except Exception as e_auto:
-                                    print(f"[AUTO] Error verificación en espera de envío: {e_auto}", flush=True)
                                 time.sleep(random.uniform(12, 30))
 
                                 update_terminal(f'<span class="log-info">[PROC] Recordatorio: {nombre} ({dias} días)...')
@@ -3354,6 +3344,19 @@ elif menu_option == "Centro de Notificaciones":
                     progress_bar.progress((idx + 1) / total_rows)
 
                 print(f"[LOOP] All {total_rows} rows processed", flush=True)
+
+                # === REVISIÓN FINAL: al terminar TODA la cola de envío ===
+                # Único momento (junto al descanso largo) donde se revisa: los
+                # pacientes notificados al inicio ya tuvieron tiempo de responder.
+                try:
+                    update_terminal('<span class="log-info">[AUTO] Cola de envío terminada. Revisando respuestas de todos los notificados...</span>')
+                    _rev_fin, _conf_fin, _rej_fin = verificar_en_pausa_envio(
+                        client, sheet_conn, df_proc, current_number_digits,
+                        mis_si, mis_no, len(df_proc), update_terminal, tag="[FINAL]")
+                    update_terminal(f'<span class="log-success">[AUTO] Revisión final: {_rev_fin} revisados | {_conf_fin} confirmados | {_rej_fin} rechazos</span>')
+                except Exception as e_auto:
+                    print(f"[AUTO] Error en revisión final: {e_auto}", flush=True)
+
                 update_terminal(f'<span class="log-success">[DONE] Todas las tareas finalizadas.</span>')
                 st.balloons()
                 st.cache_data.clear() 
@@ -3363,7 +3366,7 @@ elif menu_option == "Centro de Notificaciones":
             finally:
                 pass  # client cleanup handled by requests session
 
-        # === LÓGICA DE VERIFICACIÓN (BOTÓN 2) - ACTUALIZADA CON LÍMITE DE 5 ===
+        # === LÓGICA DE VERIFICACIÓN (BOTÓN 2) - LÍMITE MAX_TOTAL_REV ===
         if verificar:
             client = init_evolution_client()
             if not client:
