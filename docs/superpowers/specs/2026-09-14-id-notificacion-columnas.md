@@ -1,7 +1,14 @@
-# Spec: Columnas ID_NOTIFICACION_1 / ID_NOTIFICACION_2
+# Spec: Columnas INFO_NOTIFICACION_1 / INFO_NOTIFICACION_2
 
 Fecha: 2026-09-14
 Estado: aprobado por usuario (formato A)
+
+> **Corrección 2026-09-25:** el encabezado real en la hoja es
+> `INFO_NOTIFICACION_1` / `INFO_NOTIFICACION_2` (columnas AD/índice 30 y
+> AE/índice 31), verificado contra el encabezado exportado de la hoja.
+> El nombre `ID_NOTIFICACION_*` de este documento original era incorrecto
+> (solo el mensaje del commit histórico `62f182e` lo conserva). El código
+> siempre leyó/escribió `INFO_NOTIFICACION_*`.
 
 ## Objetivo
 
@@ -9,8 +16,8 @@ Trazabilidad mínima de QUÉN notificó: registrar en dos columnas nuevas el nom
 
 ## Alcance
 
-- **ID_NOTIFICACION_1** → columna **AD (índice 30)** — pareja de FECHA_NOTIF_1.
-- **ID_NOTIFICACION_2** → columna **AE (índice 31)** — pareja de FECHA_NOTIF_2.
+- **INFO_NOTIFICACION_1** → columna **AD (índice 30)** — pareja de FECHA_NOTIF_1.
+- **INFO_NOTIFICACION_2** → columna **AE (índice 31)** — pareja de FECHA_NOTIF_2.
 - Los encabezados ya existen en la hoja (fila 1). No se crea ninguna columna.
 
 ## Contenido de la celda

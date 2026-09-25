@@ -1,4 +1,9 @@
-# Columnas ID_NOTIFICACION_1 / ID_NOTIFICACION_2 — Implementation Plan
+# Columnas INFO_NOTIFICACION_1 / INFO_NOTIFICACION_2 — Implementation Plan
+
+> **Corrección 2026-09-25:** los encabezados reales de la hoja son
+> `INFO_NOTIFICACION_1` / `INFO_NOTIFICACION_2` (AD/AE). El nombre original
+> `ID_NOTIFICACION_*` de este plan era incorrecto (solo lo conserva el
+> mensaje del commit histórico `62f182e`); el código siempre usó `INFO_*`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -11,7 +16,7 @@
 ## Global Constraints
 
 - Ambos archivos `medtify_app_v15.py` y `medtify_app_v15_chat.py` deben recibir cambios IDÉNTICOS. El único diff permitido entre ellos es la línea preexistente `EVO_API_URL_CODE` (túnel de cada máquina).
-- No se crean columnas en la hoja: los encabezados "ID_NOTIFICACION_1" (AD) y "ID_NOTIFICACION_2" (AE) ya existen.
+- No se crean columnas en la hoja: los encabezados "INFO_NOTIFICACION_1" (AD) y "INFO_NOTIFICACION_2" (AE) ya existen.
 - Contenido de celda: `"NombrePerfil (número)"`; si `profile_name` vacío → solo `número`; en error → `""`. Nunca debe lanzar excepción ni bloquear el envío.
 - No modificar ESTADO, FECHA, METODO ni ninguna otra lógica de envío existente.
 - NO hacer `git push` (el usuario autoriza push explícitamente en cada momento).
@@ -113,7 +118,7 @@ grep -n "id_notif_1" medtify_app_v15.py # 5 ocurrencias (1 cálculo + 4 usos)
 
 ```bash
 git add medtify_app_v15.py medtify_app_v15_chat.py
-git commit -m "feat(notif): escribir ID_NOTIFICACION_1 (AD) en éxito y error"
+git commit -m "feat(notif): escribir INFO_NOTIFICACION_1 (AD) en éxito y error"
 ```
 
 ---
@@ -168,7 +173,7 @@ grep -n "id_notif_2" medtify_app_v15.py # 5 ocurrencias (1 cálculo + 4 usos)
 
 ```bash
 git add medtify_app_v15.py medtify_app_v15_chat.py
-git commit -m "feat(notif): escribir ID_NOTIFICACION_2 (AE) en éxito y error"
+git commit -m "feat(notif): escribir INFO_NOTIFICACION_2 (AE) en éxito y error"
 ```
 
 ---
