@@ -1188,18 +1188,23 @@ def verificar_respuestas_wsp(client, numero, keywords_si=None, keywords_no=None,
 # Se ejecuta con el tiempo muerto del bucle de envío para no frenar los envíos.
 # ==============================================================================
 
+# Tope de revisiones por fila (columna TOTAL_REV, col 27). Compartido por el
+# Botón 2 y la verificación automática en pausas: a las N revisiones la fila
+# deja de revisarse. Subido de 5 -> 7 porque las pausas consumen intentos.
+MAX_TOTAL_REV = 7
+
 def _fila_elegible_verificacion(row):
     """Criterios idénticos a los del Botón 2.
 
     Devuelve (es_reagendamiento, intentos_usados) o (None, None) si la fila no
-    debe revisarse: aún no notificada, ya finalizada, tope de 5 revisiones
-    (TOTAL_REV) o fecha de la cita pasada."""
+    debe revisarse: aún no notificada, ya finalizada, tope de MAX_TOTAL_REV
+    revisiones (TOTAL_REV) o fecha de la cita pasada."""
     try:
         val_rev = str(row.get('TOTAL_REV', '0')).strip()
         conteo_actual = int(val_rev) if val_rev.isdigit() else 0
     except (TypeError, ValueError):
         conteo_actual = 0
-    if conteo_actual >= 5:
+    if conteo_actual >= MAX_TOTAL_REV:
         return None, None
 
     es_reag = str(row.get('CAMBIO_DE_HORA') or '').strip().upper() == "SI"
@@ -1222,7 +1227,7 @@ def verificar_en_pausa_envio(client, sheet_conn, df_proc, current_number_digits,
                              update_terminal=None, tag="[AUTO]"):
     """Revisa hasta `max_filas` pacientes NOTIFICADO OK que aún no responden y
     escribe el resultado en la hoja (col 25/26 CONFIRMA, col 28 detalle y
-    col 27 TOTAL_REV +1 con tope 5), igual que el Botón 2.
+    col 27 TOTAL_REV +1 con tope MAX_TOTAL_REV), igual que el Botón 2.
 
     Pensada para correr dentro de las pausas del bucle de envío (descanso
     largo y espera del turno seguro).
@@ -3465,7 +3470,7 @@ elif menu_option == "Centro de Notificaciones":
                         except:
                             conteo_actual = 0
                         
-                        if conteo_actual >= 5:
+                        if conteo_actual >= MAX_TOTAL_REV:
                             continue 
                         # -----------------------------------------------------------
 
@@ -3489,7 +3494,7 @@ elif menu_option == "Centro de Notificaciones":
                         ya_finalizado = "CONFIRMADO" in estado_actual_conf or "NO ASISTIRA" in estado_actual_conf
 
                         if estado_notif == "NOTIFICADO OK" and not ya_finalizado:
-                            update_terminal(f'<span class="log-info">[CHECK] Revisando {nombre} (Intento {conteo_actual + 1}/5)...')
+                            update_terminal(f'<span class="log-info">[CHECK] Revisando {nombre} (Intento {conteo_actual + 1}/{MAX_TOTAL_REV})...')
                             
                             # Anclaje temporal: solo aceptar respuesta si es POSTERIOR a la notificación.
                             # Rama normal -> FECHA_NOTIF_1; reagendamiento -> FECHA_NOTIF_2.
