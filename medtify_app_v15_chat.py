@@ -1179,6 +1179,149 @@ def verificar_respuestas_wsp(client, numero, keywords_si=None, keywords_no=None,
     return client.verificar_respuesta(numero, keywords_si, keywords_no, notif_epoch)
 
 
+# ==============================================================================
+# VERIFICACIÓN AUTOMÁTICA EN PAUSAS DEL ENVÍO (Botón 1)
+# Misma lógica que el Botón 2: gate de identidad del número notificador +
+# ancla temporal (solo respuestas POSTERIORES al envío; los mensajes del bot
+# quedan fuera porque get_last_incoming_message solo mira entrantes y exige
+# el JID del paciente) + clasificador de keywords.
+# Se ejecuta con el tiempo muerto del bucle de envío para no frenar los envíos.
+# ==============================================================================
+
+def _fila_elegible_verificacion(row):
+    """Criterios idénticos a los del Botón 2.
+
+    Devuelve (es_reagendamiento, intentos_usados) o (None, None) si la fila no
+    debe revisarse: aún no notificada, ya finalizada, tope de 5 revisiones
+    (TOTAL_REV) o fecha de la cita pasada."""
+    try:
+        val_rev = str(row.get('TOTAL_REV', '0')).strip()
+        conteo_actual = int(val_rev) if val_rev.isdigit() else 0
+    except (TypeError, ValueError):
+        conteo_actual = 0
+    if conteo_actual >= 5:
+        return None, None
+
+    es_reag = str(row.get('CAMBIO_DE_HORA') or '').strip().upper() == "SI"
+    _estado = row.get('ESTADO_REA') if es_reag else row.get('ESTADO')
+    _conf = row.get('CONFIRMA_REAGEN') if es_reag else row.get('CONFIRMA_HORA')
+    _fecha = row.get('NUEVA_FECHA') if es_reag else row.get('FECHA_AGENDADA')
+
+    if str(_estado or '').strip() != "NOTIFICADO OK":
+        return None, None
+    _conf_txt = str(_conf or '')
+    if "CONFIRMADO" in _conf_txt or "NO ASISTIRA" in _conf_txt:
+        return None, None
+    if calcular_dias(_fecha) < 0:
+        return None, None
+    return es_reag, conteo_actual
+
+
+def verificar_en_pausa_envio(client, sheet_conn, df_proc, current_number_digits,
+                             keywords_si, keywords_no, max_filas,
+                             update_terminal=None, tag="[AUTO]"):
+    """Revisa hasta `max_filas` pacientes NOTIFICADO OK que aún no responden y
+    escribe el resultado en la hoja (col 25/26 CONFIRMA, col 28 detalle y
+    col 27 TOTAL_REV +1 con tope 5), igual que el Botón 2.
+
+    Pensada para correr dentro de las pausas del bucle de envío (descanso
+    largo y espera del turno seguro).
+    Devuelve (revisadas, confirmados, rechazos)."""
+
+    def _log(html, plain):
+        print(plain, flush=True)
+        if update_terminal:
+            update_terminal(html)
+
+    revisadas = confirmados = rechazos = 0
+
+    for idx, row in df_proc.iterrows():
+        if revisadas >= max_filas:
+            break
+        try:
+            es_reag, conteo_actual = _fila_elegible_verificacion(row)
+            if es_reag is None:
+                continue
+
+            fila = idx + 2
+            nombre = str(row.get('NOMBRE_PACIENTE') or '')
+            col_confirma = 26 if es_reag else 25  # CONFIRMA_REAGEN / CONFIRMA_HORA
+
+            # Ancla temporal: la respuesta solo vale si es posterior al envío.
+            _fecha_notif = row.get('FECHA_NOTIF_2') if es_reag else row.get('FECHA_NOTIF_1')
+            notif_epoch = _fecha_notif_a_epoch(_fecha_notif)
+
+            # Gate de identidad: el número HOY conectado debe ser el que notificó la fila.
+            _info_fila = row.get('INFO_NOTIFICACION_2') if es_reag else row.get('INFO_NOTIFICACION_1')
+            _info_alt = row.get('INFO_NOTIFICACION_1') if es_reag else row.get('INFO_NOTIFICACION_2')
+            _tiene_info = bool(str(_info_fila or '').strip()) or bool(str(_info_alt or '').strip())
+            if not _tiene_info:
+                estado, detalle = verificar_respuestas_wsp(client, row.get('TELEFONO'),
+                                                           keywords_si, keywords_no, notif_epoch)
+            else:
+                esperado = _numero_notificador_a_digits(_info_fila)
+                if esperado is None:
+                    estado, detalle = "PENDIENTE", "(gate) INFO notificador vacío o ilegible"
+                elif current_number_digits is None or current_number_digits != esperado:
+                    estado, detalle = "PENDIENTE", "(gate) número conectado no coincide con el notificador"
+                else:
+                    estado, detalle = verificar_respuestas_wsp(client, row.get('TELEFONO'),
+                                                               keywords_si, keywords_no, notif_epoch)
+
+            revisadas += 1
+
+            # TOTAL_REV: mismo comportamiento que el Botón 2 (+1 por revisión).
+            try:
+                sheet_conn.update_cell(fila, 27, conteo_actual + 1)
+                try:
+                    df_proc.at[idx, 'TOTAL_REV'] = conteo_actual + 1
+                except Exception:
+                    # La columna puede ser str (hoja de cálculo) u object/int.
+                    df_proc.at[idx, 'TOTAL_REV'] = str(conteo_actual + 1)
+            except Exception as e_rev:
+                print(f"[AUTO] Error actualizando TOTAL_REV fila {fila}: {e_rev}", flush=True)
+
+            col_conf_nombre = 'CONFIRMA_REAGEN' if es_reag else 'CONFIRMA_HORA'
+            if estado == "CONFIRMADO":
+                _log(f'<span class="log-success">{tag} [YES] {nombre}: "{detalle}"</span>',
+                     f'[AUTO] [YES] {nombre}: {detalle}')
+                try:
+                    sheet_conn.update_cell(fila, col_confirma, "CONFIRMADO")
+                    sheet_conn.update_cell(fila, 28, detalle)
+                    df_proc.at[idx, col_conf_nombre] = "CONFIRMADO"
+                    confirmados += 1
+                except Exception as e_sheet:
+                    _log(f'<span class="log-error">{tag} [SAVE ERR] {e_sheet}</span>',
+                         f'[AUTO] [SAVE ERR] {e_sheet}')
+            elif estado == "NO ASISTIRA":
+                _log(f'<span class="log-error">{tag} [NO] {nombre}: "{detalle}"</span>',
+                     f'[AUTO] [NO] {nombre}: {detalle}')
+                try:
+                    sheet_conn.update_cell(fila, col_confirma, "NO ASISTIRA")
+                    sheet_conn.update_cell(fila, 28, detalle)
+                    df_proc.at[idx, col_conf_nombre] = "NO ASISTIRA"
+                    rechazos += 1
+                except Exception as e_sheet:
+                    _log(f'<span class="log-error">{tag} [SAVE ERR] {e_sheet}</span>',
+                         f'[AUTO] [SAVE ERR] {e_sheet}')
+            else:  # PENDIENTE / AMBIGUO
+                _log(f'<span class="log-info">{tag} [WAIT] {nombre}: "{detalle}"</span>',
+                     f'[AUTO] [WAIT] {nombre}: {detalle}')
+                if estado == "AMBIGUO":
+                    try:
+                        sheet_conn.update_cell(fila, 28, detalle)
+                    except Exception:
+                        pass
+
+            time.sleep(1)
+
+        except Exception as e_inner:
+            print(f"[AUTO] EXCEPTION en pausa: {type(e_inner).__name__}: {e_inner}", flush=True)
+            continue
+
+    return revisadas, confirmados, rechazos
+
+
 def _fecha_notif_a_epoch(fecha_str):
     """FECHA_NOTIF_* (dd/mm/aaaa hh:mm[:ss] en America/Santiago) -> epoch UTC (int).
     La planilla real guarda "14/9/2026 11:48:00" CON segundos (y en alguna rama
@@ -2994,11 +3137,30 @@ elif menu_option == "Centro de Notificaciones":
                     st.session_state.get("evo_api_key", EVO_API_KEY_CODE),
                     st.session_state.get("evo_instance", EVO_INSTANCE_CODE),
                 )
+                # === VERIFICACIÓN AUTOMÁTICA EN PAUSAS (mismos gates que el Botón 2) ===
+                mis_si = APP_CONFIG['keywords'].get('SI', DEFAULT_RESPUESTAS_SI)
+                mis_no = APP_CONFIG['keywords'].get('NO', DEFAULT_RESPUESTAS_NO)
+                try:
+                    _det_auto = client.get_instance_details() or {}
+                    current_number_digits = _numero_notificador_a_digits(str(_det_auto.get("phone", "") or ""))
+                except Exception:
+                    current_number_digits = None
+                PAUSA_REV_LARGA = 15  # máx. pacientes revisados en el descanso de 2-5 min
+                PAUSA_REV_ENVIO = 1    # máx. pacientes revisados en la espera de 12-30 s
                 for idx, row in df_proc.iterrows():
                     # 1. LÓGICA DE DESCANSO LARGO (FRENO DE EMERGENCIA)
                     if mensajes_enviados_racha >= random.randint(5, 9):
                         tiempo_descanso = random.randint(120, 300) # 2 a 5 minutos
                         update_terminal(f'<span class="log-info">☕ Tomando descanso de seguridad por {tiempo_descanso}s...</span>')
+                        # --- Revisión automática de respuestas con el tiempo muerto de la pausa ---
+                        try:
+                            _rev, _conf_auto, _rej = verificar_en_pausa_envio(
+                                client, sheet_conn, df_proc, current_number_digits,
+                                mis_si, mis_no, PAUSA_REV_LARGA, update_terminal)
+                            if _rev:
+                                update_terminal(f'<span class="log-info">[AUTO] Pausa larga: {_rev} revisados | {_conf_auto} confirmados | {_rej} rechazos</span>')
+                        except Exception as e_auto:
+                            print(f"[AUTO] Error verificación en descanso largo: {e_auto}", flush=True)
                         time.sleep(tiempo_descanso)
                         mensajes_enviados_racha = 0 # Reiniciar contador
                     
@@ -3047,6 +3209,12 @@ elif menu_option == "Centro de Notificaciones":
                         if es_cambio and st_rea == "":
                             # --- AQUI SÍ ESPERAMOS (SOLO SI VAMOS A ENVIAR) ---
                             update_terminal(f'<span class="log-info">⏳ Esperando turno seguro para enviar...</span>')
+                            # --- Revisión automática (1 fila) mientras espera el turno ---
+                            try:
+                                verificar_en_pausa_envio(client, sheet_conn, df_proc, current_number_digits,
+                                                         mis_si, mis_no, PAUSA_REV_ENVIO, update_terminal)
+                            except Exception as e_auto:
+                                print(f"[AUTO] Error verificación en espera de envío: {e_auto}", flush=True)
                             time.sleep(random.uniform(12, 30))
                             
                             update_terminal(f'<span class="log-info">[PROC] Reagendando: {nombre}...')
@@ -3076,6 +3244,14 @@ elif menu_option == "Centro de Notificaciones":
                                         sheet_conn.update_cell(fila, 31, id_notif_2)
                                         sheet_conn.update_cell(fila, 24, "WHATSAPP")       # METODO_REA
                                     except: pass
+                                    # Reflejar en memoria lo recién escrito para que la
+                                    # verificación en pausas vea la fila como NOTIFICADO OK.
+                                    try:
+                                        df_proc.at[idx, 'ESTADO_REA'] = "NOTIFICADO OK"
+                                        df_proc.at[idx, 'FECHA_NOTIF_2'] = ahora
+                                        df_proc.at[idx, 'INFO_NOTIFICACION_2'] = id_notif_2
+                                    except Exception:
+                                        pass
                                     update_terminal(f'<span class="log-success">[SENT] Reagendamiento enviado a {nombre}')
                                 else:
                                     try:
@@ -3095,6 +3271,12 @@ elif menu_option == "Centro de Notificaciones":
                             if 1 <= dias <= rango_maximo:
                                 # --- AQUI SÍ ESPERAMOS (SOLO SI VAMOS A ENVIAR) ---
                                 update_terminal(f'<span class="log-info">⏳ Esperando turno seguro para enviar...</span>')
+                                # --- Revisión automática (1 fila) mientras espera el turno ---
+                                try:
+                                    verificar_en_pausa_envio(client, sheet_conn, df_proc, current_number_digits,
+                                                             mis_si, mis_no, PAUSA_REV_ENVIO, update_terminal)
+                                except Exception as e_auto:
+                                    print(f"[AUTO] Error verificación en espera de envío: {e_auto}", flush=True)
                                 time.sleep(random.uniform(12, 30))
 
                                 update_terminal(f'<span class="log-info">[PROC] Recordatorio: {nombre} ({dias} días)...')
@@ -3122,6 +3304,14 @@ elif menu_option == "Centro de Notificaciones":
                                         sheet_conn.update_cell(fila, 30, id_notif_1)
                                         sheet_conn.update_cell(fila, 14, "WHATSAPP")      # METODO
                                     except: pass
+                                    # Reflejar en memoria lo recién escrito para que la
+                                    # verificación en pausas vea la fila como NOTIFICADO OK.
+                                    try:
+                                        df_proc.at[idx, 'ESTADO'] = "NOTIFICADO OK"
+                                        df_proc.at[idx, 'FECHA_NOTIF_1'] = ahora
+                                        df_proc.at[idx, 'INFO_NOTIFICACION_1'] = id_notif_1
+                                    except Exception:
+                                        pass
                                     update_terminal(f'<span class="log-success">[SENT] Recordatorio enviado a {nombre}')
                                 else:
                                     try:
