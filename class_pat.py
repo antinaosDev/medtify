@@ -10,6 +10,132 @@ import pandas as pd
 
 
 def class_pat(df):
+    """
+    Clasifica patologías en un DataFrame de pacientes basándose en diccionario de palabras clave.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame de entrada con datos de pacientes que debe contener
+                          columnas que empiezan con "DIAGNOSTICO" (ej. DIAGNOSTICO 1, DIAGNOSTICO 2, etc.)
+                          y una columna "RUT" para identificación única de pacientes.
+
+    Returns:
+        pd.DataFrame: DataFrame con las siguientes columnas adicionales agregadas:
+                      - Para cada columna DIAGNOSTICO original: "{col}_CLASIFICADO" con el
+                        nombre de la categoría clasificada.
+                      - "TOTAL_UNICAS": Número entero representando la cuenta de patologías
+                        únicas por RUT (después de la clasificación).
+
+    Description:
+        Esta función clasifica patologías en un conjunto de datos de pacientes mediante
+        matching de expresiones regulares contra un diccionario predefinido de categorías
+        y sus palabras clave asociadas (PK). El diccionario cubre una amplia gama de
+        condiciones médicas, sociales y administrativas relevantes para el sistema de salud.
+
+        El algoritmo funciona de la siguiente manera:
+        1. Itera sobre todas las columnas que empiezan con "DIAGNOSTICO" en el DataFrame
+        2. Para cada columna, inicializa una nueva columna "{col}_CLASIFICADO" con valor
+           "Sin Clasificar"
+        3. Convierte los textos de diagnóstico a minúsculas y los busca contra los patrones
+           regex construidos desde el diccionario de palabras clave
+        4. Cuando se encuentra una coincidencia, asigna el nombre de la categoría a la
+           columna de clasificación correspondiente
+        5. Después de clasificar todas las columnas, genera un conteo de patologías únicas
+           por RUT utilizando un "melt" (aplanado) del DataFrame para contar categorías
+           únicas por paciente
+        6. Agrega la columna "TOTAL_UNICAS" con el conteo de patologías únicas por RUT
+
+        Características importantes:
+        - Case-insensitive: las búsquedas no distinguen mayúsculas de minúsculas
+        - Partial matching: las palabras clave pueden aparecer en cualquier parte del texto
+        - Priority: Si un diagnóstico coincide con múltiples categorías, se usa la primera
+          encontrada en el diccionario
+        - Efficiency: Utiliza operaciones vectorizadas de Pandas para procesamiento eficiente
+        - No muta las columnas originales, solo agrega nuevas columnas de clasificación
+
+    Notes:
+        - Se asume que las columnas de diagnóstico contienen texto descriptivo
+        - El diccionario de categorías está integrado en el código y cubre condiciones
+          médicas comunes, pero puede extenderse añadiendo entradas al diccionario interno
+        - Las patologías no reconocidas se clasifican como "Sin Clasificar"
+        - La columna TOTAL_UNICAS cuenta solo patologías distintas de "Sin Clasificar"
+        - Si no hay columna 'RUT' o columnas de diagnóstico, TOTAL_UNICAS será 0
+
+    Example:
+        >>> import pandas as pd
+        >>> df = pd.DataFrame({
+        ...     'RUT': ['12345678-9', '9876543-2'],
+        ...     'DIAGNOSTICO 1': ['diabetes', 'asma'],
+        ...     'DIAGNOSTICO 2': ['HTA', ''],
+        ... })
+        >>> resultado = class_pat(df)
+        >>> resultado['DIAGNOSTICO 1_CLASIFICADO'].tolist()
+        ['Diabetes Mellitus', 'Asma Bronquial']
+        >>> resultado['TOTAL_UNICAS'].tolist()
+        [1, 1]
+    """
+    """
+    Clasifica patologías en un DataFrame de pacientes basándose en diccionario de palabras clave.
+
+    Parameters:
+        df (pd.DataFrame): DataFrame de entrada con datos de pacientes que debe contener
+                          columnas que empiezan con "DIAGNOSTICO" (ej. DIAGNOSTICO 1, DIAGNOSTICO 2, etc.)
+                          y una columna "RUT" para identificación única de pacientes.
+
+    Returns:
+        pd.DataFrame: DataFrame con las siguientes columnas adicionales agregadas:
+                      - Para cada columna DIAGNOSTICO original: "{col}_CLASIFICADO" con el
+                        nombre de la categoría clasificada.
+                      - "TOTAL_UNICAS": Número entero representando la cuenta de patologías
+                        únicas por RUT (después de la clasificación).
+
+    Description:
+        Esta función clasifica patologías en un conjunto de datos de pacientes mediante
+        matching de expresiones regulares contra un diccionario predefinido de categorías
+        y sus palabras clave asociadas (PK). El diccionario cubre una amplia gama de
+        condiciones médicas, sociales y administrativas relevantes para el sistema de salud.
+
+        El algoritmo funciona de la siguiente manera:
+        1. Itera sobre todas las columnas que empiezan con "DIAGNOSTICO" en el DataFrame
+        2. Para cada columna, inicializa una nueva columna "{col}_CLASIFICADO" con valor
+           "Sin Clasificar"
+        3. Convierte los textos de diagnóstico a minúsculas y los busca contra los patrones
+           regex construidos desde el diccionario de palabras clave
+        4. Cuando se encuentra una coincidencia, asigna el nombre de la categoría a la
+           columna de clasificación correspondiente
+        5. Después de clasificar todas las columnas, genera un conteo de patologías únicas
+           por RUT utilizando un "melt" (aplanado) del DataFrame para contar categorías
+           únicas por paciente
+        6. Agrega la columna "TOTAL_UNICAS" con el conteo de patologías únicas por RUT
+
+        Características importantes:
+        - Case-insensitive: las búsquedas no distinguen mayúsculas de minúsculas
+        - Partial matching: las palabras clave pueden aparecer en cualquier parte del texto
+        - Priority: Si un diagnóstico coincide con múltiples categorías, se usa la primera
+          encontrada en el diccionario
+        - Efficiency: Utiliza operaciones vectorizadas de Pandas para procesamiento eficiente
+        - No muta las columnas originales, solo agrega nuevas columnas de clasificación
+
+    Notes:
+        - Se asume que las columnas de diagnóstico contienen texto descriptivo
+        - El diccionario de categorías está integrado en el código y cubre condiciones
+          médicas comunes, pero puede extenderse añadiendo entradas al diccionario interno
+        - Las patologías no reconocidas se clasifican como "Sin Clasificar"
+        - La columna TOTAL_UNICAS cuenta solo patologías distintas de "Sin Clasificar"
+        - Si no hay columna 'RUT' o columnas de diagnóstico, TOTAL_UNICAS será 0
+
+    Example:
+        >>> import pandas as pd
+        >>> df = pd.DataFrame({
+        ...     'RUT': ['12345678-9', '9876543-2'],
+        ...     'DIAGNOSTICO 1': ['diabetes', 'asma'],
+        ...     'DIAGNOSTICO 2': ['HTA', ''],
+        ... })
+        >>> resultado = class_pat(df)
+        >>> resultado['DIAGNOSTICO 1_CLASIFICADO'].tolist()
+        ['Diabetes Mellitus', 'Asma Bronquial']
+        >>> resultado['TOTAL_UNICAS'].tolist()
+        [1, 1]
+    """
 
     diccionario = {
     "Consumo Perjudicial o Dependiente de OH": {"PK": [

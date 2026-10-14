@@ -8,13 +8,6 @@ from datetime import datetime
 
 
 def normalizar_telefono_chat(numero):
-    """
-    Normalize a Chilean phone number to format 569XXXXXXXX (11 digits).
-    
-    Accepts: +56 9 1234 5678, 0912345678, 56912345678, etc.
-    Returns: '56912345678'
-    Raises: ValueError if the result doesn't have valid digits.
-    """
     if not numero:
         raise ValueError("Telefono vacio")
     num = re.sub(r'[^0-9]', '', str(numero).strip())
@@ -35,22 +28,11 @@ def normalizar_telefono_chat(numero):
 
 
 def make_jid(numero):
-    """
-    Convert a normalized phone number to WhatsApp JID format.
-    Input: '56912345678' -> Output: '56912345678@s.whatsapp.net'
-    """
     num = normalizar_telefono_chat(numero)
     return f"{num}@s.whatsapp.net"
 
 
 def build_pacientes_chat_index(df_base):
-    """
-    Build a lookup index from the Base de Pacientes DataFrame.
-    
-    Uses columns: TELEFONO, NOMBRE_PACIENTE, RUT, PROFESION, FECHA_AGENDADA, HORA_AGENDADA
-    
-    Returns: dict {jid: {"nombre": str, "rut": str, "pol": str, "etiqueta": str, "telefono": str}}
-    """
     index = {}
     if df_base is None or df_base.empty:
         return index
@@ -88,12 +70,6 @@ def build_pacientes_chat_index(df_base):
 
 
 def formatear_hora_mensaje(timestamp):
-    """
-    Format a WhatsApp message timestamp to a human-readable time string.
-    
-    Accepts: int (unix timestamp), str (iso format), or datetime.
-    Returns: 'HH:MM' if today, 'DD/MM HH:MM' otherwise.
-    """
     if isinstance(timestamp, (int, float)):
         dt = datetime.fromtimestamp(timestamp)
     elif isinstance(timestamp, str):
@@ -113,16 +89,6 @@ def formatear_hora_mensaje(timestamp):
 
 
 def build_autorizados_chat_index(df_base, col_estado="ESTADO", valor_ok="NOTIFICADO OK"):
-    """
-    Build a lookup index de USUARIOS AUTORIZADOS desde la hoja propia de la cuenta (URL_SHEET).
-
-    SOLO incluye filas donde la columna ESTADO == 'NOTIFICADO OK'.
-    Misma extracción que build_pacientes_chat_index (jid, nombre, rut, pol, etiqueta, telefono),
-    pero NUNCA fusiona con la base completa: el universo de la bandeja es exclusivamente
-    los números autorizados.
-
-    Returns: dict {jid: {"nombre", "rut", "pol", "etiqueta", "telefono"}}
-    """
     index = {}
     if df_base is None or df_base.empty:
         return index
@@ -172,13 +138,6 @@ def build_autorizados_chat_index(df_base, col_estado="ESTADO", valor_ok="NOTIFIC
 
 
 def ordenar_chats_por_ultimo_mensaje(chats_pacientes, reverse=True):
-    """
-    Ordena la lista de chats de la bandeja por el timestamp del último mensaje recibido,
-    del más reciente al más antiguo (reverse=True).
-
-    Cada chat DEBE traer la llave "ts_chat" (unix timestamp del último mensaje).
-    Si falta, se usa 0 (va al final). No muta la lista original.
-    """
     if not chats_pacientes:
         return []
     return sorted(

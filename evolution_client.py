@@ -663,6 +663,40 @@ class EvolutionClient:
 
 
 def clasificar_por_keywords(texto, keywords_si=None, keywords_no=None):
+    """
+    Clasifica un texto basado en palabras clave SI y NO.
+
+    Parameters:
+        texto (str): Texto a clasificar.
+        keywords_si (list, optional): Lista de palabras clave que indican "SI".
+            Default es None, usa DEFAULT_RESPUESTAS_SI.
+        keywords_no (list, optional): Lista de palabras clave que indican "NO".
+            Default es None, usa DEFAULT_RESPUESTAS_NO.
+
+    Returns:
+        str: Resultado de la clasificación. Puede ser "CONFIRMADO", "NO ASISTIRA",
+             "AMBIGUO" o "PENDIENTE".
+
+    Description:
+        Esta función clasifica un mensaje de respuesta basándose en la presencia
+        de palabras clave predefinidas. Busca primero las palabras clave "SI",
+        luego las palabras clave "NO". Si no se encuentra ninguna coincidencia,
+        retorna "PENDIENTE" para ser procesado manualmente.
+
+        La clasificación sigue esta lógica:
+        1. Si se encuentra alguna palabra clave en keywords_si, retorna "CONFIRMADO"
+        2. Si se encuentra alguna palabra clave en keywords_no, retorna "NO ASISTIRA"
+        3. Si no se encuentran palabras clave, retorna "AMBIGUO" para solicitar
+           clarificación manual
+        4. Si hay restricciones de tiempo (notif_epoch), puede retornar "PENDIENTE"
+
+    Example:
+        >>> clasificar_por_keywords("Sí, asistiré", ["sí", "asistir"], ["no"])
+        "CONFIRMADO"
+        >>> clasificar_por_keywords("No puedo asistir", ["sí"], ["no", "asistir"])
+        "NO ASISTIRA"
+    """
+
     """Nueva regla del clasificador: se escanean TODAS las keywords (NO y SI
     juntas) con el mismo regex \\b...\\b lowercase y gana la que aparece MÁS
     TARDE en el body (mayor match.start()).
@@ -821,6 +855,36 @@ NOTIF_MARKERS = [
 
 
 def es_notificacion(texto):
+    """
+    Determina si un texto representa una notificación de respuesta.
+
+    Parameters:
+        texto (str): Texto a evaluar para determinar si es una notificación.
+
+    Returns:
+        bool: True si el texto es identificado como notificación, False en caso contrario.
+
+    Description:
+        Esta función evalúa si un texto dado corresponde a una notificación de
+        respuesta de un paciente. Utiliza patrones de lenguaje y expresiones
+        regulares para detectar respuestas afirmativas o negativas a citas o
+        notificaciones de salud.
+
+        La función analiza:
+        - Patrones de confirmación ("sí", "asistiré", "confirmado")
+        - Patrones de negativa ("no", "no asistiré", "cancelado")
+        - Contexto y estructura del mensaje
+
+    Returns:
+        bool: True si el texto es una notificación reconocida, False en caso contrario.
+
+    Example:
+        >>> es_notificacion("Sí, asistiré a la cita")
+        True
+        >>> es_notificacion("Hola, ¿cómo estás?")
+        False
+    """
+
     """Requiere 2+ markers O >200 chars con 1 marker para clasificar como notificacion (port v14)."""
     t = texto.lower().strip()
     matches = sum(1 for pat in NOTIF_MARKERS if pat in t)
