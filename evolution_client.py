@@ -644,7 +644,10 @@ class EvolutionClient:
             return "PENDIENTE", "Último mensaje vacío"
 
         # STEP 1 (v14 parity): si el último mensaje es notificación del bot → PENDIENTE
-        if es_notificacion(body):
+        # En modo legacy (notif_epoch is None), se OMITE este check de marcadores de notificación
+        # para permitir clasificación por keywords (comentario en medtify_app_v15.py: "None conserva
+        # el comportamiento legacy (clasificación solo por texto)").
+        if notif_epoch is not None and es_notificacion(body):
             return "PENDIENTE", "Ultimo mensaje es notificacion del bot, paciente aun no responde"
 
         # STEP 2 + STEP 3: nueva regla "última keyword gana". Se escanean TODAS

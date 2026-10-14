@@ -65,7 +65,7 @@
 | Log envío **3 aperturas Sheets** | 1 sola `connect_sheet` + 1 `open_by_url` + 1 `append_row` | Editado |
 | `send_message` delay artificial 1.2-3s | Parámetro `delay_ms=0` para envío médico instantáneo | `evolution_client.py` ✓ |
 
-### 🎨 PENDIENTE - Rediseño UI ("Se ve horrible")
+### 🎨 PENDIENTE - Rediseño y Optimización de Interfaz de Usuario (UI)
 
 **Objetivo**: Chat visual tipo WhatsApp/Web moderno, responsive, sin CSS externo (solo `st.html` + clases Streamlit).
 
